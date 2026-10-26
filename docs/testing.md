@@ -28,10 +28,14 @@ The four CTest entries remain `unit.contract`, `unit.reference`,
 parameterized subcase is not a separate CTest entry. Reports distinguish
 doctest cases, Python test methods, and parameter combinations.
 
-Production code is kept in four files: `src/main.cpp`, `src/framework.cpp`,
-`src/align.cpp`, and `src/internal.hpp`. Module and alternative-core tests link
-the same framework library as the real executable. Replacing `src/align.cpp`
-does not require copying input or output code into a separate test program.
+Production code is organized into seven source-directory files: the entry point,
+command line/application flow, input, output, result validation, algorithm, and
+one shared internal header. See the [source map](../README.md#architecture).
+The support library compiles the four framework modules separately. Module and
+alternative-core tests link this same library as the executable. Replacing
+`src/align.cpp` does not require copying input or output code into a separate
+test program. The functional split preserves all existing test cases and
+expected answers; no tests merely mirror the number or names of source files.
 
 ## Input matrix
 

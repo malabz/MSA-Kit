@@ -44,7 +44,10 @@ flowchart LR
 | Layer | Responsibility | Implementation location |
 |---|---|---|
 | Entry point | Invoke the shared application with the selected core | `src/main.cpp` |
-| Framework | CLI, logging, streams, compression, kseq records, cleaning, result validation, completed writes, and error mapping | `src/framework.cpp` |
+| Command line and flow | Options, logging, application orchestration, and error mapping | `src/cli.cpp` |
+| Input | Files/stdin, strict gzip decoding, kseq records, cleaning, and statistics | `src/input.cpp` |
+| Output | File identity checks, FASTA/gzip serialization, protected writes, and atomic publication | `src/output.cpp` |
+| Result validation | Row identity/count, lengths, residues, and column checks | `src/validation.cpp` |
 | Core | Align validated in-memory sequences | `src/align.cpp` |
 | Internal interface | Types, declarations, fault seams, error categories, and checked arithmetic | `src/internal.hpp` |
 | Public interface | Declare the record types and the core entry point | `include/msakit/core.hpp` |
@@ -53,12 +56,21 @@ The public types are in [core.hpp](../include/msakit/core.hpp), and the replacea
 algorithm is in [align.cpp](../src/align.cpp). The core has no
 dependency on CLI11, spdlog, filesystem paths, or compression. The surrounding
 layers own those concerns. There is one selected core implementation in the
-executable, rather than a runtime plugin loader. `src` contains exactly four
-files; the former implementation and detail headers are actually consolidated,
-not relocated into another source directory. The shared internal header uses
+executable, rather than a runtime plugin loader. `src` contains seven files:
+six implementation files grouped by function and one shared internal header.
+The command-line module owns `run_application()` and its core-function injection
+point; `main.cpp` only calls it with the selected algorithm. The shared internal header uses
 standard-library types and a forward declaration of `z_stream_s`, so including
 it in the core does not require zlib, CLI11, or logging headers. The vendored
 parser is [extern/kseq/kseq.h](../extern/kseq/kseq.h).
+
+The support library compiles the command-line, input, output and validation
+modules separately. The production executable and test drivers link this same
+library. kseq is instantiated only in the input implementation; zlib-specific
+helpers stay in the input/output implementations. Shared error helpers use only
+the standard library. Each implementation includes its own dependencies.
+This organization changes neither the public interface nor version 0.2.0's
+record, CLI, output, or error semantics.
 
 The application validates input before calling the core and validates the
 complete returned alignment before opening a final output transaction. It keeps

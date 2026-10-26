@@ -9,7 +9,7 @@ the upstream license differs.
 Source: [pinglu-zhang/HAlign-5, commit
 `b0d5608811d44e30bc323da54f0583ceaaf684d2`](https://github.com/pinglu-zhang/HAlign-5/tree/b0d5608811d44e30bc323da54f0583ceaaf684d2).
 
-The nucleotide-cleaning table in `src/framework.cpp` is adapted from
+The nucleotide-cleaning table in `src/input.cpp` is adapted from
 `include/utils.h` at that revision. Its notice is **Copyright (c) 2026 HAlign-5
 contributors**. The complete MIT permission and warranty text is included in
 [LICENSE](LICENSE), together with the upstream copyright attribution.

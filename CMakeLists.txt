@@ -34,7 +34,8 @@ if(MSAKIT_ENABLE_SANITIZERS)
         -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie)
 endif()
 
-add_library(msakit_support STATIC src/framework.cpp)
+add_library(msakit_support STATIC
+    src/cli.cpp src/input.cpp src/output.cpp src/validation.cpp)
 target_include_directories(msakit_support PUBLIC include PRIVATE src)
 target_include_directories(msakit_support SYSTEM PRIVATE
     extern/CLI11/include extern/spdlog/include extern/kseq)

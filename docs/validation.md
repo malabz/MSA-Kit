@@ -1,6 +1,6 @@
 # MSA-Kit 0.2.0 validation
 
-The kseq migration and four-file source layout were built and tested on the Linux server on 2026-10-26. This record describes executed checks for the production, replacement-core and runtime-only configurations.
+The seven-file functional layout was built and tested on the Linux server on 2026-10-26. This record describes newly executed checks for the production, replacement-core and runtime-only configurations after splitting the framework. The refactor starts from commit `edcf1a8b1262aa052d18cb7eec692897a299e7e2` and keeps version 0.2.0.
 
 ## Environment and source
 
@@ -16,7 +16,7 @@ The kseq migration and four-file source layout were built and tested on the Linu
 
 The HAlign-5 baseline is `b0d5608811d44e30bc323da54f0583ceaaf684d2`. The [dependency manifest](../extern/provenance.json) records the original and distributed kseq hashes and its local modifications. All 138 listed dependency header and license hashes were verified.
 
-`src` contains exactly `main.cpp`, `framework.cpp`, `align.cpp`, and `internal.hpp`. Previous implementation files and internal headers were actually merged. The reference core changed only its location and include directives; its scoring, traceback and merge remain unchanged. Its target builds without third-party include directories.
+`src` contains exactly `main.cpp`, `cli.cpp`, `input.cpp`, `output.cpp`, `validation.cpp`, `align.cpp`, and `internal.hpp`. The former concentrated implementation is removed. Command-line flow, input, output and validation code blocks were moved verbatim, with explicit per-file includes and shared standard-library error helpers in the internal header. Source hashes confirm that the reference core, public API, entry point, dependencies and all test files are unchanged from the baseline. Compilation records show six independent implementation units and no third-party include directories for the core target.
 
 ## Completed builds and tests
 
@@ -30,14 +30,14 @@ The HAlign-5 baseline is `b0d5608811d44e30bc323da54f0583ceaaf684d2`. The [depend
 
 The 37 doctest cases performed 8,863 assertions in each build: 3,888 contract and 4,975 reference assertions. Python methods include parameterized subcases. No Python methods were skipped. Doctest's skipped counts refer to the complementary contract/reference filter; every case was executed in the full run.
 
-Release CTest took 7.07 seconds and the instrumented run took 29.95 seconds. These are test-suite durations, not alignment performance measurements. Both runs reported zero failed tests; the instrumented run reported no sanitizer errors. The first compilation found a two-argument doctest `CAPTURE` invocation in a new test. Splitting it into two captures fixed the compile error before these full runs.
+Release CTest took 7.20 seconds and the instrumented run took 30.35 seconds. These are test-suite durations, not alignment performance measurements. Both configurations were built in new directories and reported zero failed tests. Compilation completed on the first attempt, and the instrumented run reported no sanitizer errors. No test answers were changed and no source-layout-only tests were added.
 
 Additional completed checks:
 
 - `ctest -L contract --output-on-failure`: 2/2 entries passed.
 - The complete Python contract suite ran with the existing alternative core, which right-pads sequences instead of using star alignment: all 63 methods passed.
 - A fresh `BUILD_TESTING=OFF` configuration built the production targets and installed the executable under an isolated build-directory prefix. No Python discovery occurred. The installed executable reported version 0.2.0, reproduced `examples/tiny.expected.fasta`, and converted a FASTQ stdin example to the expected cleaned FASTA.
-- Documentation links, dependency hashes, the four-file source layout, and matching local/server source copies were checked after implementation.
+- Documentation links, dependency hashes, the seven-file source layout, and matching local/server source copies were checked after implementation.
 
 ## Input behavior exercised
 
@@ -55,9 +55,9 @@ All 13 multi-sequence datasets are retained: six fixed sets with six records eac
 
 These are synthetic software tests. The largest score table in the MSA set has 263,682 cells, approximately 2.1 MB of scores. Large stream fixtures contain only one sequence and avoid pairwise DP.
 
-## Pinned-parser comparison
+## Retained pinned-parser comparison
 
-A separate bounded comparison instantiated the original pinned kseq and the patched header on identical streams. Seed 20261026 generated 100,000 short byte streams, each checked with read chunks of 1, 3, 17 and 16,384 bytes. All 400,000 comparisons agreed on return values and raw name, comment, sequence and quality fields. Inputs include preambles, markers, whitespace, CR, NUL and high bytes. Allocation/read-fault behavior intentionally differs and is checked separately by module tests.
+During the preceding kseq migration, a separate bounded comparison instantiated the original pinned kseq and the patched header on identical streams. Seed 20261026 generated 100,000 short byte streams, each checked with read chunks of 1, 3, 17 and 16,384 bytes. All 400,000 comparisons agreed on return values and raw name, comment, sequence and quality fields. Inputs include preambles, markers, whitespace, CR, NUL and high bytes. This comparison was not rerun for the functional split: the vendored header and parser implementation block are unchanged. Allocation/read-fault tests are included in the newly executed module suites.
 
 This establishes compatibility for the exercised inputs, not every possible stream. Reproducible comparison source, original/patched headers and the result log are retained in the ignored `build-kseq-review/` directory on both the server and local mirror.
 
@@ -66,43 +66,43 @@ This establishes compatibility for the exercised inputs, not every possible stre
 Run from the repository root:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build --parallel 2
-(cd build && ctest --output-on-failure)
+cmake -S . -B build-modular-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build-modular-release --parallel 2
+(cd build-modular-release && ctest --output-on-failure)
 
-cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug \
+cmake -S . -B build-modular-sanitize -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DMSAKIT_ENABLE_SANITIZERS=ON
-cmake --build build-sanitize --parallel 2
-(cd build-sanitize && ctest --output-on-failure)
+cmake --build build-modular-sanitize --parallel 2
+(cd build-modular-sanitize && ctest --output-on-failure)
 
-(cd build && ctest -L contract --output-on-failure)
+(cd build-modular-release && ctest -L contract --output-on-failure)
 
-cmake -S . -B build-kseq-runtime-only -DCMAKE_BUILD_TYPE=Release \
+cmake -S . -B build-modular-runtime -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=OFF
-cmake --build build-kseq-runtime-only --parallel 2
-cmake --install build-kseq-runtime-only \
-  --prefix "$PWD/build-kseq-runtime-only/install"
-./build-kseq-runtime-only/install/bin/msakit --version
+cmake --build build-modular-runtime --parallel 2
+cmake --install build-modular-runtime \
+  --prefix "$PWD/build-modular-runtime/install"
+./build-modular-runtime/install/bin/msakit --version
 ```
 
-Recorded CTest runs additionally used `--output-junit kseq-test-results.xml`, supported by the observed CMake version. This optional reporting flag does not change the declared CMake 3.18 build minimum. To reproduce the alternative-core contract run:
+Recorded CTest runs additionally used `--output-junit modular-test-results.xml`, supported by the observed CMake version, and configuration enabled `CMAKE_EXPORT_COMPILE_COMMANDS` for inspection of module compilation. These reporting options do not change the declared CMake 3.18 build minimum. To reproduce the alternative-core contract run:
 
 ```bash
-mkdir -p build-kseq-evidence
-printf '#!/bin/sh\nexec "%s/build/msakit_test_driver" valid "$@"\n' "$PWD" \
-  > build-kseq-evidence/alternate-core
-chmod +x build-kseq-evidence/alternate-core
-python3 tests/integration.py --binary build-kseq-evidence/alternate-core \
-  --test-driver build/msakit_test_driver --suite contract
+mkdir -p build-modular-evidence
+printf '#!/bin/sh\nexec "%s/build-modular-release/msakit_test_driver" valid "$@"\n' "$PWD" \
+  > build-modular-evidence/alternate-core
+chmod +x build-modular-evidence/alternate-core
+python3 tests/integration.py --binary build-modular-evidence/alternate-core \
+  --test-driver build-modular-release/msakit_test_driver --suite contract
 ```
 
-Full test output is preserved in `build-kseq-evidence/release-full.log` and `sanitize-full.log`, independent of later filtered CTest runs. The same directory contains build, contract-only, alternative-core, runtime-only and integrity logs. JUnit files are under `build/` and `build-sanitize/`. Copies of the evidence are included in the local mirror's ignored directories.
+Full test output is preserved in `build-modular-evidence/release-full.log` and `sanitize-full.log`, independent of later filtered CTest runs. The same directory contains build, contract-only, alternative-core, runtime-only and integrity logs, plus the executed commands and baseline/final hashes. JUnit files are under `build-modular-release/` and `build-modular-sanitize/`. Copies of the evidence are included in the local mirror's ignored directories.
 
 ## Sanitizers and retained history
 
 The existing sanitizer-only `-fno-pie` / `-no-pie` configuration is retained. During the 0.1.0 implementation, an empty instrumented PIE reproduced intermittent startup crashes on this host; its non-PIE control did not. Release keeps its usual layout. ASan leak detection and immediate failure, and UBSan immediate failure and stack traces, remain enabled. No suppression list or host setting change was introduced.
 
-The 0.1.0 input-test and multi-sequence logs remain in `build-input-tests-evidence/` and `build-msa-evidence/`. The latter contains earlier retained input/output FASTA and observed-width tables for all 13 datasets. Current 0.2.0 acceptance uses the newly executed suites above, not historical runs.
+The 0.1.0 input-test and multi-sequence logs remain in `build-input-tests-evidence/` and `build-msa-evidence/`. The latter contains earlier retained input/output FASTA and observed-width tables for all 13 datasets. The preceding four-file kseq migration's logs remain in `build-kseq-evidence/`. Acceptance of the current seven-file layout uses the newly executed suites above, not historical runs.
 
 ## Interpretation and limits
 

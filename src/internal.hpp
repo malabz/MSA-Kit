@@ -1,20 +1,25 @@
 #pragma once
 
 #include "msakit/core.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 // Keep the replaceable core independent of zlib and other third-party headers.
 struct z_stream_s;
 
 namespace msakit::detail {
 
+// Shared error categories and byte-stream helpers.
 inline constexpr int kCliError = 2;
 inline constexpr int kInputError = 3;
 inline constexpr int kIoError = 4;
@@ -29,6 +34,14 @@ private:
     int code_;
 };
 
+[[noreturn]] inline void fail_io(const std::string& action, const std::string& path,
+                          int error = errno) {
+    throw Error(kIoError, action + ": " + path + ": " + std::strerror(error));
+}
+
+inline constexpr std::size_t kBufferSize = 64 * 1024;
+
+// Checked arithmetic for the replaceable core.
 inline std::size_t checked_add(std::size_t left, std::size_t right) {
     if (right > std::numeric_limits<std::size_t>::max() - left) {
         throw Error(kCoreError, "alignment size addition overflow");
@@ -55,6 +68,7 @@ inline void check_score_bounds(std::size_t center, std::size_t query) {
     }
 }
 
+// Command line and application flow.
 struct Options {
     std::string input;
     std::string output;
@@ -69,14 +83,16 @@ using CoreFunction = Alignment (*)(std::span<const SequenceRecord>);
 // from an alternate core without adding production CLI switches or backdoors.
 int run_application(int argc, char** argv, CoreFunction core);
 
-struct CleaningStats {
-    std::size_t uppercase_conversions = 0;
-    std::size_t unknown_replacements = 0;
-};
-
+// File identity shared by input and output protection.
 struct FileIdentity {
     std::uintmax_t device;
     std::uintmax_t inode;
+};
+
+// Input records, cleaning statistics and read-operation test seam.
+struct CleaningStats {
+    std::size_t uppercase_conversions = 0;
+    std::size_t unknown_replacements = 0;
 };
 
 struct InputData {
@@ -86,15 +102,6 @@ struct InputData {
 };
 
 InputData read_input(const std::string& path);
-void check_output_path(const Options& options,
-                       const std::optional<FileIdentity>& input_identity);
-void write_output(const Options& options,
-                  std::span<const SequenceRecord> input,
-                  const Alignment& alignment,
-                  const std::optional<FileIdentity>& input_identity);
-
-void validate_alignment(std::span<const SequenceRecord> input,
-                        const Alignment& alignment);
 
 class InputOperations {
 public:
@@ -107,6 +114,14 @@ public:
 
 InputData read_input_with_operations(const std::string& path,
                                     InputOperations& operations);
+
+// Output operations and publication test seam.
+void check_output_path(const Options& options,
+                       const std::optional<FileIdentity>& input_identity);
+void write_output(const Options& options,
+                  std::span<const SequenceRecord> input,
+                  const Alignment& alignment,
+                  const std::optional<FileIdentity>& input_identity);
 
 class FileOperations {
 public:
@@ -127,5 +142,9 @@ void write_output_with_operations(
     const Alignment& alignment,
     const std::optional<FileIdentity>& input_identity,
     FileOperations& operations);
+
+// Algorithm-independent result validation.
+void validate_alignment(std::span<const SequenceRecord> input,
+                        const Alignment& alignment);
 
 }  // namespace msakit::detail

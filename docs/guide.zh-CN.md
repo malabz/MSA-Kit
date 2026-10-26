@@ -1,6 +1,6 @@
 # MSA-Kit 中文开发指南
 
-MSA-Kit 0.2.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，`src` 收敛为四个文件，派生开发者主要编辑 `src/align.cpp`。
+MSA-Kit 0.2.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，`src` 按功能组织为七个文件，派生开发者主要编辑 `src/align.cpp`。
 
 仓库已包含 C++20 实现、参考星比对、小型示例和测试。实际执行的构建与测试结果见 [验证记录](validation.md)。
 
@@ -38,13 +38,28 @@ FASTA / gzip 写出
 include/msakit/core.hpp    # 公共核心接口
 src/
 ├── main.cpp              # 极简程序入口
-├── framework.cpp         # CLI、输入、清洗、验证、输出和错误处理
+├── cli.cpp               # 参数、日志、调用流程和异常处理
+├── input.cpp             # 文件/stdin、gzip 解压、kseq 解析和清洗
+├── output.cpp            # FASTA/gzip 写出、路径保护和原子发布
+├── validation.cpp        # 比对结果的通用合法性检查
 ├── align.cpp             # 可替换的参考星比对核心
-└── internal.hpp          # 内部类型、声明、错误和尺寸检查
+└── internal.hpp          # 共用类型、声明、错误和尺寸检查
 extern/kseq/kseq.h        # 固定来源并带安全补丁的读取依赖
 ```
 
-原来的外围实现与内部头文件已实际合并。`main.cpp` 调用共享框架，程序、模块测试和替代核心测试复用同一个 `msakit_support` 库；`msakit_core` 保留独立算法目标。`internal.hpp` 通过前向声明引用 zlib 流类型，因此算法编译不必包含 zlib、CLI11 或日志库头文件。
+`main.cpp` 调用命令行模块中的 `run_application()`，后者按顺序完成读取与清洗、输出路径检查、核心比对、结果验证和输出。命令行、输入、输出、验证各自独立编译，再组成 `msakit_support` 库，供程序、模块测试和替代核心测试共同使用；`msakit_core` 保留独立算法目标。共用声明集中在一个 `internal.hpp` 中，按职责分段。该头文件通过前向声明引用 zlib 流类型，因此算法编译不必包含 zlib、CLI11 或日志库头文件。
+
+后续开发可以按任务定位文件：
+
+| 要修改的功能 | 实现位置 |
+| --- | --- |
+| 参数、日志配置、程序执行步骤 | [cli.cpp](../src/cli.cpp) |
+| 输入格式解析、字符清洗、转换统计 | [input.cpp](../src/input.cpp) |
+| 输出格式、折行、压缩和文件保护 | [output.cpp](../src/output.cpp) |
+| 所有核心都必须满足的结果规则 | [validation.cpp](../src/validation.cpp) |
+| 比对算法 | [align.cpp](../src/align.cpp) |
+
+这次拆分只调整源码组织，版本保持 0.2.0，输入行为、算法、命令行参数和退出码均沿用既有约定。
 
 ## 2. 核心接收和返回什么
 

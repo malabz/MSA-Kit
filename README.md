@@ -4,7 +4,7 @@ A reusable template for building multiple sequence alignment tools with consiste
 
 MSA-Kit is designed so that developers can copy the project, replace its alignment core, and reuse the surrounding sequence readers, writers, command-line interface, and result checks.
 
-**Version 0.2.0.** Sequence records are parsed with the pinned HAlign-5 `kseq.h`, and `src` contains four files. Developers primarily replace `src/align.cpp`. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
+**Version 0.2.0.** Sequence records are parsed with the pinned HAlign-5 `kseq.h`. Seven source-directory files separate the command line, input, output, validation and algorithm, with one shared internal header. Developers primarily replace `src/align.cpp`. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
 
 ## Documentation
 
@@ -56,17 +56,30 @@ Alignment align(std::span<const SequenceRecord> input);
 }
 ```
 
-The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/align.cpp](src/align.cpp). The source directory contains exactly four files:
+The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/align.cpp](src/align.cpp). The source directory contains seven files organized by responsibility:
 
 ```text
 src/
-├── main.cpp         # Program entry point
-├── framework.cpp    # CLI, kseq input, cleaning, validation, and output
-├── align.cpp        # Replaceable reference star alignment
-└── internal.hpp     # Shared internal declarations and checked arithmetic
+├── main.cpp          # Minimal program entry point
+├── cli.cpp           # Options, logging, application flow and error handling
+├── input.cpp         # Files/stdin, gzip decoding, kseq records and cleaning
+├── output.cpp        # FASTA/gzip writing, path protection and atomic publication
+├── validation.cpp    # Algorithm-independent alignment checks
+├── align.cpp         # Replaceable reference star alignment
+└── internal.hpp      # Shared internal declarations and checked arithmetic
 ```
 
 The executable and test programs link the same framework library. The core depends only on the C++ standard library; the vendored parser lives in `extern/kseq/kseq.h`.
+
+| Development task | Edit here |
+| --- | --- |
+| Change options, startup or execution flow | [cli.cpp](src/cli.cpp) |
+| Change input parsing or cleaning | [input.cpp](src/input.cpp) |
+| Change output formatting or file handling | [output.cpp](src/output.cpp) |
+| Change the shared result checks | [validation.cpp](src/validation.cpp) |
+| Implement an alignment algorithm | [align.cpp](src/align.cpp) |
+
+`main.cpp` calls `run_application()` in the command-line module. That function connects reading, core execution, result validation and writing. Internal declarations stay in one header, while implementation helpers remain local to their modules. This functional split leaves the 0.2.0 interface and input/output behavior unchanged.
 
 Every returned row must preserve its corresponding cleaned input sequence when gaps are removed. All rows must have the same length, and no column may consist entirely of gaps. Rebuilt headers and duplicate records are preserved by input position rather than matched through a unique-name map.
 
