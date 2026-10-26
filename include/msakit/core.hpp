@@ -16,7 +16,7 @@ struct Alignment {
     std::vector<std::string> rows;
 };
 
-// Replace the implementation in src/core/star.cpp, preserving this contract.
+// Replace the implementation in src/align.cpp, preserving this contract.
 // Input is nonempty, cleaned, gap-free and read-only. rows[i] belongs to input[i].
 Alignment align(std::span<const SequenceRecord> input);
 

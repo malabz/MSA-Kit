@@ -1,6 +1,5 @@
+#include "internal.hpp"
 // Separate test executable: none of these fault modes exist in production CLI.
-#include "detail/app.hpp"
-#include "detail/errors.hpp"
 
 #include <algorithm>
 #include <cstdio>

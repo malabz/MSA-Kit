@@ -1,9 +1,8 @@
-# MSA-Kit 0.1.0 validation
+# MSA-Kit 0.2.0 validation
 
-The implemented server working tree was built and tested on Linux. This report
-records the completed checks for input handling and multi-sequence output validity.
+The kseq migration and four-file source layout were built and tested on the Linux server on 2026-10-26. This record describes executed checks for the production, replacement-core and runtime-only configurations.
 
-## Environment
+## Environment and source
 
 | Item | Observed value |
 | --- | --- |
@@ -12,151 +11,59 @@ records the completed checks for input handling and multi-sequence output validi
 | CMake | 3.26.4 |
 | System zlib | 1.2.11 |
 | Test interpreter | Python 3.10.12 |
-| Bundled headers | CLI11 2.6.1; spdlog 1.16.0; doctest 2.4.12 |
-| Program version | `msakit 0.1.0` |
+| Bundled headers | CLI11 2.6.1; spdlog 1.16.0; doctest 2.4.12; pinned kseq with safety patches |
+| Installed version | `msakit 0.2.0` |
 
-The HAlign-5 source snapshot and dependency file hashes are recorded in
-[the dependency manifest](../extern/provenance.json). All **137** listed header
-and license files were checked against their recorded SHA-256 values.
+The HAlign-5 baseline is `b0d5608811d44e30bc323da54f0583ceaaf684d2`. The [dependency manifest](../extern/provenance.json) records the original and distributed kseq hashes and its local modifications. All 138 listed dependency header and license hashes were verified.
+
+`src` contains exactly `main.cpp`, `framework.cpp`, `align.cpp`, and `internal.hpp`. Previous implementation files and internal headers were actually merged. The reference core changed only its location and include directives; its scoring, traceback and merge remain unchanged. Its target builds without third-party include directories.
 
 ## Completed builds and tests
 
-| CTest entry | Cases | Release | Debug + ASan/UBSan |
+| CTest entry | Cases or methods | Release | Debug + ASan/UBSan |
 | --- | ---: | --- | --- |
-| `unit.contract` | 21 | Passed | Passed |
-| `unit.reference` | 8 | Passed | Passed |
-| `integration.contract` | 60 | Passed | Passed |
-| `integration.reference` | 2 | Passed | Passed |
-| Total | **91** | **4/4 CTest entries passed** | **4/4 CTest entries passed** |
+| `unit.contract` | 29 doctest cases | Passed | Passed |
+| `unit.reference` | 8 doctest cases | Passed | Passed |
+| `integration.contract` | 63 Python methods | Passed | Passed |
+| `integration.reference` | 2 Python methods | Passed | Passed |
+| Total | **102 cases/methods** | **4/4 entries passed** | **4/4 entries passed** |
 
-The 29 doctest cases performed **7,317 assertions** per build. The 62 Python
-integration methods include additional parameterized subcases. The two doctest
-groups filter each other's cases; those filtered cases are executed in the
-other group, not omitted from the full run.
+The 37 doctest cases performed 8,863 assertions in each build: 3,888 contract and 4,975 reference assertions. Python methods include parameterized subcases. No Python methods were skipped. Doctest's skipped counts refer to the complementary contract/reference filter; every case was executed in the full run.
 
-The final CTest runs reported zero failures. Their elapsed suite times were
-about 2.76 seconds for Release and 21.32 seconds for the instrumented build.
-These are test-suite durations, not alignment performance measurements.
+Release CTest took 7.07 seconds and the instrumented run took 29.95 seconds. These are test-suite durations, not alignment performance measurements. Both runs reported zero failed tests; the instrumented run reported no sanitizer errors. The first compilation found a two-argument doctest `CAPTURE` invocation in a new test. Splitting it into two captures fixed the compile error before these full runs.
 
-The original input-test expansion retained all 68 initial test cases/methods
-and added seven
-doctest cases and ten Python methods, including a catalog-integrity check that
-does not start a subprocess. Its new input matrices execute **603 subprocess
-scenarios** per full run; these are parameterized combinations, not separate
-CTest entries. The added module cases contain 326 byte/context/boundary/read
-combinations, including all 256 byte values. That expansion's final suite
-contained 85 cases/methods. The current multi-sequence extension retains them
-all and adds six Python methods, including four end-to-end methods with 127
-subprocess scenarios and two independent output-checker self-tests.
+Additional completed checks:
 
-A separate `ctest -L contract` run passed **2/2** entries during the input-test
-expansion. For the current extension, the complete Python
-contract suite was also run with the existing valid test core, which aligns by
-right-padding to the longest sequence instead of using star alignment. All
-**60 methods passed** with that core. The test-only wrapper is retained in the
-ignored evidence directory; the production executable and CLI are unchanged.
+- `ctest -L contract --output-on-failure`: 2/2 entries passed.
+- The complete Python contract suite ran with the existing alternative core, which right-pads sequences instead of using star alignment: all 63 methods passed.
+- A fresh `BUILD_TESTING=OFF` configuration built the production targets and installed the executable under an isolated build-directory prefix. No Python discovery occurred. The installed executable reported version 0.2.0, reproduced `examples/tiny.expected.fasta`, and converted a FASTQ stdin example to the expected cleaned FASTA.
+- Documentation links, dependency hashes, the four-file source layout, and matching local/server source copies were checked after implementation.
 
-No Python methods were skipped in these runs. The doctest filtered-case counts
-refer only to the complementary contract/reference group described above.
+## Input behavior exercised
 
-During the original implementation, the executable was also built with
-`BUILD_TESTING=OFF`, installed under an
-isolated prefix inside its build directory, and executed with `--version`.
-No Python package lookup was required for that build. The install target and
-standalone executable completed successfully without changing system software.
+The [testing guide](testing.md) maps behavior to stable IDs and explicit expected records. Expected answers are not generated by the production parser.
 
-During that initial validation, the checked-in [tiny input](../examples/tiny.fasta) was aligned with the Release
-executable, and its named output matched
-[the expected FASTA](../examples/tiny.expected.fasta) byte for byte.
+- 32 valid catalog cases use four input paths and three output paths: 384 combinations. They cover FASTA, FASTQ, mixed records, wrapped sequences/qualities, header reconstruction, preambles, CR/EOF, duplicate records and byte cleaning.
+- 22 content-error cases use four input paths: 88 combinations. Selected failures add 80 named-output lifecycle combinations, checking no new output, unchanged existing output under `--force`, unchanged source and no temporary files. Other error cases also check empty stdout.
+- Focused FASTQ methods add 16 quality-invariance, 36 gzip-field-split and 12 sequence/quality boundary combinations.
+- Existing gzip tests retain 8 valid variants, 13 corrupted variants and all 26 incomplete prefixes of a small member. They cover optional headers, header CRC, concatenation, empty members, payload/trailer corruption and garbage. Recognized gzip errors return 4; complete streams with invalid returned records return 3. Zero/one-byte magic prefixes remain ordinary input.
+- Module tests cover all 256 byte values in sequence context, structural markers and CR separately, and 80 boundaries around the 16 KiB kseq and 64 KiB decoder buffers. Deterministic short reads, EINTR, read errors and checked-close failures cover FASTA and FASTQ.
+- Six dedicated kseq cases cover partial initialization cleanup, every parsing allocation of a long FASTQ record, failed realloc ownership, length/arithmetic limits, errors at each byte of a small record, and short reads. Allocation faults return the parser resource status, mapped by the framework to exit 5. Length checks do not attempt huge allocations.
+- The 32 generated input groups retain seed 20261026 and bounded record sizes. Existing CLI, output publication, link/same-file, faulty-core and reference-algorithm checks continue to run.
 
-## Multi-sequence datasets and observed outputs
+All 13 multi-sequence datasets are retained: six fixed sets with six records each and seven generated sets using seed 20261027, up to 128 records. Their 127 transport/order/wrapping scenarios passed in both builds and with the alternative core. The independent checker verifies rebuilt headers, record order/count, exact cleaned residues after removing gaps, equal nonempty row widths, allowed characters and no all-gap column. Its self-tests accept two distinct valid layouts and reject 16 malformed outputs plus two serialization-width errors.
 
-All 13 datasets below contain multiple sequences and passed the independent
-output-contract checks. The six fixed FASTA files each contain six records;
-seven generated datasets use seed 20261027. These are synthetic software-test
-datasets, not biological reference alignments. The observed alignment widths
-are not assertions for replacement cores.
+These are synthetic software tests. The largest score table in the MSA set has 263,682 cells, approximately 2.1 MB of scores. Large stream fixtures contain only one sequence and avoid pairwise DP.
 
-| Case | Sequences | Cleaned input length range | Output columns | Status |
-| --- | ---: | ---: | ---: | --- |
-| `MSA-FIXED-001` | 6 | 11–15 | 19 | Passed |
-| `MSA-FIXED-002` | 6 | 6–9 | 9 | Passed |
-| `MSA-FIXED-003` | 6 | 3–7 | 8 | Passed |
-| `MSA-FIXED-004` | 6 | 8–20 | 20 | Passed |
-| `MSA-FIXED-005` | 6 | 1–129 | 129 | Passed |
-| `MSA-FIXED-006` | 6 | 79–161 | 161 | Passed |
-| `MSA-GENERATED-001` | 2 | 16–128 | 128 | Passed |
-| `MSA-GENERATED-002` | 3 | 16–128 | 129 | Passed |
-| `MSA-GENERATED-003` | 8 | 16–128 | 138 | Passed |
-| `MSA-GENERATED-004` | 16 | 16–128 | 145 | Passed |
-| `MSA-GENERATED-005` | 64 | 16–128 | 241 | Passed |
-| `MSA-GENERATED-006` | 128 | 16–128 | 276 | Passed |
-| `MSA-GENERATED-007` | 4 | 510–513 | 513 | Passed |
+## Pinned-parser comparison
 
-The matrix tests cover files, gzip, stdin, output wrapping, and reordered
-inputs. Every result preserves complete headers and cleaned sequence content
-by input position, has equal nonempty rows containing only `ACGTUN-`, and has
-no all-gap columns. The independent Python checker accepts two legal layouts
-and rejects 16 damaged outputs plus two serialization-width errors.
+A separate bounded comparison instantiated the original pinned kseq and the patched header on identical streams. Seed 20261026 generated 100,000 short byte streams, each checked with read chunks of 1, 3, 17 and 16,384 bytes. All 400,000 comparisons agreed on return values and raw name, comment, sequence and quality fields. Inputs include preambles, markers, whitespace, CR, NUL and high bytes. Allocation/read-fault behavior intentionally differs and is checked separately by module tests.
 
-A separate retained-output run writes each input, aligned FASTA and stderr
-under `build-msa-evidence/results/`. Its `msa-results.csv` and `msa-results.json`
-summarize sequence counts, input lengths, observed output widths and gaps.
-The largest score matrix in these datasets is 263,682 cells, approximately
-2.1 MB for scores; this is not a statement about total process memory.
-
-## Coverage
-
-- The [input testing matrix](testing.md) maps stable identifiers to expected
-  records, counters, error locations, and file outcomes. Fixed gzip variant
-  identifiers are explicit and checked for uniqueness.
-- The full byte domain, contextual LF/CRLF/CR and header markers, first/middle/
-  last malformed records, and exact source/line/record diagnostics.
-- Twelve representative valid inputs across all four input and three output
-  transports; 17 invalid FASTA cases through all four input transports.
-  Seed 20261026 supplies 32 small generated record sets with four transports.
-- Ordinary and gzip files, non-seekable stdin, clean stdout, complete headers,
-  duplicate names and sequences, record order, LF/CRLF, and final-line behavior.
-- Exact byte-cleaning rules and disjoint counts, retained U, pre-existing gap
-  rejection, empty or malformed input, and all documented error categories.
-- gzip magic detection, concatenated and empty members, truncated streams,
-  CRC corruption, trailing garbage, and both input/output buffer boundaries.
-  The largest stream fixture is one deterministic 250,000-character sequence,
-  so it does not invoke a large pairwise dynamic-programming calculation.
-- Optional gzip headers and header CRC, damaged method/flags/payload/CRC/size,
-  all incomplete prefixes of a tiny member, and member splits inside headers,
-  CRLF, and sequence text. Valid fixtures are independently checked by Python
-  gzip and per-member zlib decoding.
-- Forty precise buffer-boundary combinations, including the plain-input
-  two-byte detection prefix; deterministic short reads, EINTR recovery, and
-  input read/close errors with exactly-once descriptor-release checks.
-- Default/custom/unwrapped output, overwrite refusal, complete forced
-  replacement, same-file and link aliases, and preservation of existing files
-  on failures.
-- Deterministic injection of write, gzip-finalization, close, publication,
-  and allocation errors; short/interrupted writes; real `/dev/full` and
-  closed-pipe failures; publication races and temporary-name reuse.
-- Rejection of faulty core results and exceptions, plus acceptance of a
-  different valid layout from a separate test core.
-- The reference star example, scoring and tie rules, insertion-slot merging,
-  independent exhaustive short-pair optimal-score checks, seeded small
-  multiple-alignment cases, input preservation, and arithmetic bounds.
-
-The application has no public fault-injection flags. The fake cores and file
-operation substitutes are confined to separate test targets and internal test
-interfaces.
-
-No input semantics or alignment algorithm required repair. The earlier input
-expansion added the internal input-operation boundary with real system-call
-defaults. The current multi-sequence extension changes only tests, fixtures,
-and documentation. Test improvements also remove an over-broad CR assertion
-that would reject otherwise valid complete headers, make fixture IDs stable,
-and include the command and captured streams in matrix-failure diagnostics.
+This establishes compatibility for the exercised inputs, not every possible stream. Reproducible comparison source, original/patched headers and the result log are retained in the ignored `build-kseq-review/` directory on both the server and local mirror.
 
 ## Reproducing the checks
 
-Run from the repository root on a Linux system with the prerequisites described
-in [README](../README.md):
+Run from the repository root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -167,65 +74,36 @@ cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DMSAKIT_ENABLE_SANITIZERS=ON
 cmake --build build-sanitize --parallel 2
 (cd build-sanitize && ctest --output-on-failure)
-```
 
-To check only the algorithm-independent contract after replacing the core:
-
-```bash
 (cd build && ctest -L contract --output-on-failure)
+
+cmake -S . -B build-kseq-runtime-only -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF
+cmake --build build-kseq-runtime-only --parallel 2
+cmake --install build-kseq-runtime-only \
+  --prefix "$PWD/build-kseq-runtime-only/install"
+./build-kseq-runtime-only/install/bin/msakit --version
 ```
 
-For the final recorded runs, CTest also received
-`--output-junit msa-test-results.xml`. This reporting option is available in the
-observed CMake version; it is not required for ordinary builds or tests. The
-server retains the generated JUnit reports at
-`build/msa-test-results.xml` and `build-sanitize/msa-test-results.xml`.
-Full logs are preserved in `build-msa-evidence/release-full.log` and
-`build-msa-evidence/sanitize-full.log`, since subsequent filtered CTest
-runs replace a build's `Testing/Temporary/LastTest.log`.
-
-The same ignored evidence directory contains the build logs,
-`targeted-release.log`, and `alternate-core-contract.log`. The earlier
-input-test expansion's logs, original baseline and source snapshot remain in
-`build-input-tests-evidence/`.
-
-The original implementation's separate runtime-only check used:
+Recorded CTest runs additionally used `--output-junit kseq-test-results.xml`, supported by the observed CMake version. This optional reporting flag does not change the declared CMake 3.18 build minimum. To reproduce the alternative-core contract run:
 
 ```bash
-cmake -S . -B build-runtime-only -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Python3=TRUE
-cmake --build build-runtime-only --parallel 2
-cmake --install build-runtime-only --prefix "$PWD/build-runtime-only/install"
-./build-runtime-only/install/bin/msakit --version
+mkdir -p build-kseq-evidence
+printf '#!/bin/sh\nexec "%s/build/msakit_test_driver" valid "$@"\n' "$PWD" \
+  > build-kseq-evidence/alternate-core
+chmod +x build-kseq-evidence/alternate-core
+python3 tests/integration.py --binary build-kseq-evidence/alternate-core \
+  --test-driver build/msakit_test_driver --suite contract
 ```
 
-CMake reported the Python-disable variable unused because this configuration
-does not invoke Python discovery at all. Users need only `BUILD_TESTING=OFF`.
+Full test output is preserved in `build-kseq-evidence/release-full.log` and `sanitize-full.log`, independent of later filtered CTest runs. The same directory contains build, contract-only, alternative-core, runtime-only and integrity logs. JUnit files are under `build/` and `build-sanitize/`. Copies of the evidence are included in the local mirror's ignored directories.
 
-## Sanitizer configuration
+## Sanitizers and retained history
 
-The first instrumented run exposed intermittent process-startup crashes, also
-affecting `--version`. A separate empty program compiled with the same compiler
-and sanitizers reproduced them: the default PIE build failed in 12 of 30
-launches, while the non-PIE control completed all 30 launches.
+The existing sanitizer-only `-fno-pie` / `-no-pie` configuration is retained. During the 0.1.0 implementation, an empty instrumented PIE reproduced intermittent startup crashes on this host; its non-PIE control did not. Release keeps its usual layout. ASan leak detection and immediate failure, and UBSan immediate failure and stack traces, remain enabled. No suppression list or host setting change was introduced.
 
-The sanitizer configuration therefore uses `-fno-pie` and `-no-pie` only for
-instrumented builds. The Release executable retains its ordinary PIE layout.
-The instrumented executable was checked to link both `libasan` and `libubsan`.
-CTest enables leak detection and immediate failure for ASan/UBSan diagnostics;
-no tests or sanitizer checks were disabled, and no suppression list was added.
-The final full run completed without sanitizer error reports.
-
-The original failed-run log remains in the ignored build directory as
-`build-sanitize/asan-initial-failure.log`. The minimal control executables are
-also retained there for investigation. No host ASLR or kernel setting was
-changed.
+The 0.1.0 input-test and multi-sequence logs remain in `build-input-tests-evidence/` and `build-msa-evidence/`. The latter contains earlier retained input/output FASTA and observed-width tables for all 13 datasets. Current 0.2.0 acceptance uses the newly executed suites above, not historical runs.
 
 ## Interpretation and limits
 
-This validates the documented software contract and the small reference
-implementation. It does not measure biological alignment accuracy, large-data
-scalability, or performance against HAlign-5 or another aligner. Protein/profile
-input, parallel execution, and platforms other than Linux remain outside the
-first version. CMake 3.18 is the declared minimum; the observed acceptance
-environment used CMake 3.26.4.
+These checks establish the software contract and bounded reference-core correctness. They do not measure biological alignment accuracy or large-data scalability. Native kseq parsing intentionally changes some 0.1.0 behavior; [the design](design.md#4-input-contract) records the differences. Protein alignment, profiles, parallel execution and non-Linux platforms remain outside scope. CMake 3.18 is the declared minimum; acceptance used 3.26.4. System software was unchanged. No Git commit, push, tag or release was created for this delivery.

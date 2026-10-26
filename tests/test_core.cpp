@@ -1,9 +1,7 @@
+#include "internal.hpp"
 #include <doctest/doctest.h>
 
 #include "msakit/core.hpp"
-#include "detail/checked.hpp"
-#include "detail/errors.hpp"
-#include "detail/validation.hpp"
 
 #include <algorithm>
 #include <cstdint>

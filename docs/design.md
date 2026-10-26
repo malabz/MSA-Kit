@@ -1,6 +1,6 @@
 # MSA-Kit design
 
-This document defines the first implementation of MSA-Kit, version 0.1.0. See the
+This document defines MSA-Kit version 0.2.0. See the
 [project overview](../README.md) and [Chinese developer guide](guide.zh-CN.md).
 Requirements here describe the implemented public contract. Build instructions
 are below; measured validation results are recorded in the
@@ -18,11 +18,11 @@ The first core is a small, deterministic star aligner intended for learning,
 interface verification, and replacement by another algorithm.
 
 The first implementation targets Linux, C++20, and CMake 3.18 or later. Its
-supported input is unaligned FASTA, either plain or gzip-compressed, from a file
+supported input is unaligned FASTA or FASTQ, either plain or gzip-compressed, from a file
 or standard input. Its output is aligned FASTA, optionally gzip-compressed when
 written to a file. Sequences are held in memory during alignment.
 
-Protein alignment, FASTQ, URL downloads, profile input, external alignment
+Protein alignment, URL downloads, profile input, external alignment
 commands, dynamic plugins, and parallel execution are outside the first
 implementation. The reference algorithm does not inherit HAlign-5's scale or
 performance claims.
@@ -43,22 +43,26 @@ flowchart LR
 
 | Layer | Responsibility | Implementation location |
 |---|---|---|
-| Application | Coordinate the stages and translate failures into exit codes | `src/main.cpp` |
-| CLI | Parse arguments; provide help and version output; configure logging | `src/cli.cpp` |
-| Input/output | Handle streams, compression, FASTA records, cleaning, and completed writes | `src/io.cpp` |
-| Core | Align validated in-memory sequences | `src/core/star.cpp` |
-| Result validation | Enforce the algorithm-independent output contract | `src/validation.cpp` |
+| Entry point | Invoke the shared application with the selected core | `src/main.cpp` |
+| Framework | CLI, logging, streams, compression, kseq records, cleaning, result validation, completed writes, and error mapping | `src/framework.cpp` |
+| Core | Align validated in-memory sequences | `src/align.cpp` |
+| Internal interface | Types, declarations, fault seams, error categories, and checked arithmetic | `src/internal.hpp` |
 | Public interface | Declare the record types and the core entry point | `include/msakit/core.hpp` |
 
 The public types are in [core.hpp](../include/msakit/core.hpp), and the replaceable
-algorithm is in [star.cpp](../src/core/star.cpp). The core has no
+algorithm is in [align.cpp](../src/align.cpp). The core has no
 dependency on CLI11, spdlog, filesystem paths, or compression. The surrounding
 layers own those concerns. There is one selected core implementation in the
-executable, rather than a runtime plugin loader.
+executable, rather than a runtime plugin loader. `src` contains exactly four
+files; the former implementation and detail headers are actually consolidated,
+not relocated into another source directory. The shared internal header uses
+standard-library types and a forward declaration of `z_stream_s`, so including
+it in the core does not require zlib, CLI11, or logging headers. The vendored
+parser is [extern/kseq/kseq.h](../extern/kseq/kseq.h).
 
 The application validates input before calling the core and validates the
 complete returned alignment before opening a final output transaction. It keeps
-input records available for validation and for writing their original headers.
+input records available for validation and for writing their rebuilt headers.
 No raw-input copy or HAlign-style working-directory tree is required.
 
 ## 3. Core interface
@@ -86,8 +90,9 @@ Alignment align(std::span<const SequenceRecord> input);
 }  // namespace msakit
 ```
 
-The input vector position is the record identity. `header` contains the complete
-FASTA header, without `>` or its line ending. Headers are not unique keys:
+The input vector position is the record identity. `header` contains the title
+rebuilt from kseq's `name` and `comment`, without the record marker or line ending
+(see section 4). Headers are not unique keys:
 duplicate headers and duplicate sequences must remain separate records.
 `sequence` contains the cleaned, nonempty sequence, with no gaps. The input
 collection must contain at least one record.
@@ -116,7 +121,7 @@ algorithm may choose a different valid alignment from the reference core.
 
 ## 4. Input contract
 
-### FASTA structure and record identity
+### Byte streams and record identity
 
 Input is a local file path or `-` for standard input. Compression is detected by
 the gzip magic bytes, independent of the filename, including for standard
@@ -125,26 +130,66 @@ decompressor. A gzip read detects corruption and premature end of stream.
 Concatenated gzip members are supported, including empty members; non-gzip
 trailing bytes are rejected with exit code 4 rather than silently discarded.
 
-The first nonempty decompressed line must start with `>`. Each such line starts
-a new record; subsequent sequence lines are concatenated until the next header.
-Truly empty lines add no residues. LF and CRLF are accepted, as is a final line
-without a line ending. A space-only sequence line is not an empty line: its
-bytes are processed by the cleaning table below.
+The byte decoder feeds ordinary or decompressed bytes directly to kseq through
+a read callback. The framework calls `kseq_init()`, repeatedly calls
+`kseq_read()`, and uses RAII to call `kseq_destroy()`. It does not first parse
+records with another parser or re-encode the stream for kseq. FASTA, FASTQ, and
+mixed records recognized by the pinned parser are accepted through this path.
+FASTQ quality strings are parsed for length consistency, then discarded; they
+do not reach the core or output and do not affect cleaning statistics.
 
-The text after `>` must contain at least one non-whitespace character. Preserve
-the entire header text, including descriptions and repeated names, without
-trimming or token-based reconstruction. Only the `>` marker and line ending are
-removed. Headers are not passed through sequence cleaning.
+Header reconstruction matches HAlign-5: start with `name`; append a nonempty
+`comment`; insert one space only when both fields are nonempty. Neither field
+is sequence-cleaned. Repeated titles and sequences retain separate input
+positions. Original header separator bytes are not preserved exactly.
 
-An empty input, empty header, empty sequence, or sequence text before the first
-header is an input-content error. FASTQ is not automatically accepted by a
-general-purpose sequence parser. Malformed content must not be silently skipped.
-Errors identify the source and, when available, the one-based record and line.
+### Pinned kseq parsing behavior and 0.1.0 compatibility
+
+Version 0.2.0 replaces the strict FASTA parser from 0.1.0. Record semantics are
+defined by the pinned kseq implementation, including these explicit examples:
+
+| Input context | Parsed behavior before cleaning |
+|---|---|
+| `>sample\tinfo` | `name` is `sample`, `comment` is `info`; rebuilt title is `sample info` |
+| `>sample  info` | The first space separates the name; the remaining leading space belongs to the comment, so the rebuilt title contains two spaces |
+| `> sample` | Empty name and comment `sample`; rebuilt title is `sample` |
+| `>sample\rinfo` | CR separates the name; rebuilt title is `sample info` |
+| `>sample info\rmore` | The CR inside the comment remains part of the title |
+| Preamble before the first marker, including a BOM or indentation | Seeking a record skips bytes until `>` or `@`, even if that marker is not at line start |
+| `>` or `@` at the beginning of a sequence line | Ends the current sequence and introduces the next record |
+| `+` at the beginning of a sequence line | Begins a quality section, including after a `>` header |
+| `A>+@C` within a sequence line | All five bytes are sequence content; cleaning gives `ANNNC` |
+| Multiline sequence or quality fields | Lines are concatenated by kseq; quality length must match sequence length |
+| Sequence `AC\r` at EOF | The trailing CR is stripped; the sequence is `AC` |
+| A CRLF blank line before the first residue | Its initial CR is retained in the sequence and subsequently becomes `N` |
+| Bare trailing `>` after an otherwise complete record | kseq can report EOF without returning another record; this is not an empty-record rejection |
+
+The line reader removes a trailing CR when its accumulated field length is
+greater than one, including at EOF. This is a native kseq rule, not the old
+promise that only actual CRLF pairs are removed. Spaces and tabs inside a
+returned sequence generally remain bytes to clean. LF-only blank sequence
+lines are skipped. Input is not interpreted as Unicode and no separate format
+repair or stricter pre-parser is applied.
+
+No returned records, a returned header containing only ASCII whitespace, or a
+returned empty sequence causes content error 3. Reported quality-length errors
+also map to 3. Errors identify the source and, when determinable, the one-based
+record being read. Physical line numbers are no longer part of the contract.
+The parser may accept or skip unusual input that the old strict reader rejected;
+MSA-Kit only validates the records actually returned by kseq.
+
+The vendored header retains its MIT notice and includes narrowly scoped safety
+patches: checked initialization and expansion, temporary-pointer reallocation,
+cleanup of partially initialized objects, checked lengths, and propagation of
+read errors. Each parsed field is limited to `INT_MAX` bytes because kseq returns
+lengths as `int`. Allocation or length failures map to 5; underlying read or
+decompression errors retain code 4. Ordinary record semantics are unchanged.
 
 ### Sequence cleaning
 
 Cleaning follows HAlign-5's byte-table approach with an explicit unaligned-input
-requirement. First reject every `-` or `.` in sequence content. Then apply this
+requirement. First reject every `-` or `.` in the sequence bytes returned by
+kseq. Then apply this
 table to each remaining byte:
 
 | Input byte | Cleaned character |
@@ -153,9 +198,9 @@ table to each remaining byte:
 | `a c g t u n` | Corresponding uppercase character |
 | Every other byte | `N` |
 
-Line endings are structural and do not reach this table. Spaces, tabs, digits,
-other IUPAC ambiguity symbols, and other bytes within sequence lines become
-`N`; they are not silently removed. Consequently, this is a byte-based
+Only bytes remaining after kseq parsing reach this table. Spaces, tabs, digits,
+other IUPAC ambiguity symbols, and other returned sequence bytes become
+`N`. Consequently, this is a byte-based
 normalization policy, not Unicode sequence interpretation or protein support.
 RNA `U` is preserved and is never rewritten as `T` by the input layer.
 
@@ -172,7 +217,8 @@ sequence-preservation reference used to validate the alignment.
 ## 5. Output contract
 
 The result is FASTA with one record for every input record, in input order. The
-application writes `>` followed by the saved complete header. Each aligned row
+application writes `>` followed by the saved rebuilt header. FASTQ qualities
+are never written. Each aligned row
 contains its cleaned input residues and any newly inserted `-` characters.
 Duplicate headers and duplicate sequences remain separate output records.
 
@@ -241,6 +287,7 @@ executable has not been installed on `PATH`:
 set -o pipefail
 msakit -i input.fasta -o aligned.fasta
 msakit -i input.fasta.gz -o aligned.fasta.gz
+msakit -i reads.fastq.gz -o aligned.fasta
 cat input.fasta | msakit -i - -o - > aligned.fasta
 gzip -c input.fasta | msakit -i - -o - | gzip > aligned.fasta.gz
 ```
@@ -255,7 +302,7 @@ only when a named output is passed through `-o`.
 |---|---|
 | 0 | Alignment written successfully, or successful help/version request |
 | 2 | CLI error, including invalid width or input/output referring to the same file |
-| 3 | Invalid input content, including malformed FASTA, empty records, or existing gaps |
+| 3 | Invalid returned records, no records, existing gaps, or reported FASTQ quality-length errors |
 | 4 | Read, decompression, or write failure; missing/unreadable input; missing output parent; overwrite refusal |
 | 5 | Core exception, resource allocation failure, or invalid returned alignment |
 
@@ -355,7 +402,7 @@ A developer replacing the supplied core should:
 
 1. Copy or clone the project and build its unchanged reference implementation.
 2. Read the public interface and result conditions in section 3.
-3. Replace the marked `align` implementation in `src/core/star.cpp`, retaining
+3. Replace the marked `align` implementation in `src/align.cpp`, retaining
    the public declaration. Additional private algorithm helpers may be added;
    update the build inputs if extra translation units are introduced.
 4. Keep CLI parsing, input cleaning, header handling, output writing, and result
@@ -385,8 +432,8 @@ independently of the production parser. Generated inputs use a fixed seed.
 
 | Area | Required scenarios |
 |---|---|
-| FASTA structure | LF/CRLF, multiline records, no final newline, empty lines, empty file/header/sequence, data before first header, FASTQ rejection |
-| Identity | Descriptions and header spacing, duplicate headers, duplicate sequences, original order |
+| Kseq records | FASTA/FASTQ/mixed records, multiline sequences and qualities, quality-length errors, no final newline, empty returned records, preamble, marker and CR behavior |
+| Identity | Name/comment reconstruction, retained comment bytes, duplicate headers, duplicate sequences, original order |
 | Cleaning | Accepted lowercase letters, ambiguity symbols, spaces/tabs, disjoint conversion counts, retained U, rejection of both `-` and `.` |
 | Compression and streams | Plain and gzip files, both stdin forms, magic detection independent of suffix, truncated/corrupt gzip, plain stdout, gzip output |
 | Serialization | Width 80, another positive width, width 0, LF and final newline, headers never wrapped |
@@ -394,7 +441,7 @@ independently of the production parser. Generated inputs use a fixed seed.
 | File lifecycle | Existing output with/without force, same-file path/symlink/hard-link aliases, missing parent, write/flush/close failure, broken pipe, preservation of an existing target on failure |
 | Core contract | Substitute test cores returning too few rows, unequal widths, reordered distinct sequences, altered residues, extra characters, and all-gap columns |
 | Reference core | One sequence, identical sequences, prefix/internal/suffix insertions, deletion, different insertion lengths in one slot, N, T/U, fixed ties, repeatability |
-| Resource boundaries | Checked dimensions and lengths, allocation failure reporting, no successful partial result |
+| Resource boundaries | Checked dimensions and lengths, kseq initialization/expansion failure and cleanup, read-error propagation, no successful partial result |
 
 The build target is `msakit`; its executable is `build/msakit` for the
 single-configuration build below. Tests are registered with CTest and use
@@ -439,22 +486,25 @@ used for acceptance are in [validation.md](validation.md).
 
 All source links below are pinned to the baseline commit rather than a moving
 branch. The byte-cleaning table is adapted from that revision; the surrounding
-implementation follows MSA-Kit's more explicit contract. Bundled dependency
-headers are copied unchanged from the pinned snapshot.
+implementation follows MSA-Kit's public contract. CLI11, spdlog, and doctest
+headers are copied unchanged from the pinned snapshot. The kseq header has the
+documented allocation, length, and read-error safety patches; the original and
+modified checksums are recorded separately in the dependency manifest.
 
 | HAlign-5 source | MSA-Kit treatment |
 |---|---|
 | [CMakeLists.txt](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/CMakeLists.txt) | Retain C++20/CMake organization; make the dependency set small and zlib required; use a common CTest integration |
 | [include/config.hpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/config.hpp) | Adapt CLI11 registration and logging organization; keep only the documented general options and send logs to stderr |
-| [include/utils.h](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/utils.h) | Adapt byte-table cleaning; reject pre-existing gaps; use explicit complete headers and positional identity instead of header-keyed maps |
-| [src/utils/seq_io.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/src/utils/seq_io.cpp) | Reuse buffered-reader/writer organization where suitable; implement the exact FASTA/header/stream contract and explicit completed-write checks rather than copy unchanged |
+| [include/utils.h](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/utils.h) | Adapt byte-table cleaning; reject pre-existing gaps; keep rebuilt headers and positional identity instead of header-keyed maps |
+| [src/utils/seq_io.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/src/utils/seq_io.cpp) | Use the same kseq lifecycle and name/comment header reconstruction; feed a stricter gzip decoder through a callback and retain MSA-Kit's completed-write checks |
+| [include/kseq.h](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/kseq.h) | Vendor the fixed parser with its MIT notice; patch allocation, length checks, cleanup, and error propagation without changing normal record semantics |
 | [src/utils/preprocess.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/src/utils/preprocess.cpp) | Keep a separate preparation stage; omit consensus selection, downloads, work-directory trees, and external tool invocation |
 | [include/align.h](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/align.h) | Replace algorithm-specific interfaces with the small in-memory API; do not carry over WFA2/KSW2, sketches, profiles, or SAM intermediates |
 | [test/test_read_fasta.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/test/test_read_fasta.cpp) and [test/test_fasta_writer.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/test/test_fasta_writer.cpp) | Adapt small reader/writer test patterns; create isolated synthetic fixtures rather than inherit the entire existing test workload |
 
 The dependencies are bundled CLI11 2.6.1 for argument parsing, spdlog 1.16.0 for
-diagnostics, doctest 2.4.12 for tests, and the required system zlib library for
-gzip. The reference alignment itself uses the C++
+diagnostics, doctest 2.4.12 for tests, the pinned kseq header for record parsing,
+and the required system zlib library for gzip. The reference alignment itself uses the C++
 standard library. No external MSA executable, OpenMP runtime, WFA2, KSW2,
 MinHash, cereal, or libcurl is required for this template. The source revision,
 license sources, and SHA-256 for each bundled file are recorded in

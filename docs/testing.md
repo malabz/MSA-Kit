@@ -9,7 +9,7 @@ small sequences. The authoritative behavior remains the
 ## Test organization
 
 - [The input-case catalog](../tests/input_cases.py) contains named inputs and
-  expected records, cleaning counts, or error locations. Expected values do not
+  expected records, cleaning counts, or error record numbers. Expected values do not
   come from running the production parser.
 - [The multi-sequence catalog](../tests/msa_cases.py) adds six checked-in FASTA
   files and seven bounded generated datasets, all with at least two records.
@@ -17,6 +17,8 @@ small sequences. The authoritative behavior remains the
   feeds files or pipes, independently parses output, and checks file lifetimes.
 - [The I/O module tests](../tests/test_io.cpp) cover all byte values, exact
   buffer boundaries, and deterministic failures at the internal I/O boundary.
+- [The kseq tests](../tests/test_kseq.cpp) exercise allocation failures, length
+  limits, short reads and read-error propagation in the vendored parser.
 - [The core tests](../tests/test_core.cpp) retain independent short-pair scoring
   checks and result validation. Exact star-alignment layouts remain in the
   `reference` group.
@@ -26,6 +28,11 @@ The four CTest entries remain `unit.contract`, `unit.reference`,
 parameterized subcase is not a separate CTest entry. Reports distinguish
 doctest cases, Python test methods, and parameter combinations.
 
+Production code is kept in four files: `src/main.cpp`, `src/framework.cpp`,
+`src/align.cpp`, and `src/internal.hpp`. Module and alternative-core tests link
+the same framework library as the real executable. Replacing `src/align.cpp`
+does not require copying input or output code into a separate test program.
+
 ## Input matrix
 
 The stable identifiers below appear in assertions or Python subtest contexts.
@@ -34,18 +41,26 @@ The catalog contains the exact raw bytes and expected values for each case.
 | Behavior | Case family | Expected handling | Layer |
 | --- | --- | --- | --- |
 | Uppercase, lowercase, N, and mixed T/U | `INPUT-VALID-*`, `INPUT-BYTES-*` | Preserve uppercase and U; uppercase the six accepted lowercase letters; report disjoint counts | Module and integration |
-| IUPAC ambiguity, digits, whitespace, NUL, high-bit bytes | `INPUT-VALID-*`, `INPUT-BYTES-*` | Other sequence bytes become N, including every byte of non-ASCII sequence text | Module and integration |
+| IUPAC ambiguity, digits, whitespace, NUL, high-bit bytes | `INPUT-VALID-*`, `INPUT-BYTES-*` | Other bytes returned in kseq's sequence become N, including every byte of non-ASCII sequence text | Module and integration |
 | Existing dash or dot gaps | `INPUT-ERROR-*`, `INPUT-BYTES-*` | Content error, exit 3; never clean gaps into N | Module and integration |
-| Complete headers, duplicate names/records, embedded header characters | `INPUT-VALID-004/005/009`, `HEADER-LONG` | Preserve full header bytes and positional identity; never wrap headers | Integration |
-| Multiline sequences, LF/CRLF, empty lines, final line without LF | `INPUT-VALID-007/008`, `INPUT-STRUCTURE-001`, `INPUT-BOUNDARY-001` | Parse the same records; remove only structural line endings | Module and integration |
-| Empty or malformed records in first, middle, or last positions | `INPUT-ERROR-*` | Exit 3 with source, record, and available physical line | Integration |
-| BOM, content before a header, header indentation, FASTQ | `INPUT-ERROR-*` | Exit 3 under the existing FASTA contract | Integration |
-| Ordinary/gzip contents independent of filename | `INPUT-VALID-*`, `INPUT-ERROR-*` | Content-based detection; four equivalent input transports | Integration |
-| Optional gzip headers, header CRC, empty and concatenated members | `GZIP-VALID-*` | Decode one continuous FASTA stream | Integration |
+| Header reconstruction, duplicate names/records, embedded header characters | `INPUT-VALID-004/005/009`, `KSEQ-COMPAT-005/006/007`, `HEADER-LONG` | Rebuild name and comment with one joining space when both exist; preserve duplicate positions; never wrap output headers | Module and integration |
+| Multiline sequences, LF/CRLF, empty lines, final line without LF | `INPUT-VALID-007/008`, `KSEQ-COMPAT-008/009`, `INPUT-STRUCTURE-001`, `INPUT-BOUNDARY-001` | Follow pinned kseq line handling, including its terminal-CR behavior | Module and integration |
+| Empty returned headers/sequences, or no records | `INPUT-ERROR-*`, `KSEQ-ERROR-005/008/009/010`, `INPUT-KSEQ-002` | Exit 3 with source and a record number where available; no physical-line promise | Module and integration |
+| BOM, content before a marker and header indentation | `KSEQ-COMPAT-001/002/003/004` | kseq scans to the first record marker; these formerly rejected fixtures now succeed | Integration |
+| FASTQ and mixed FASTA/FASTQ, wrapped sequence and quality | `KSEQ-FASTQ-001` through `006`, `INPUT-KSEQ-001` | Read records in order; ignore quality values; output aligned FASTA | Module and integration |
+| Quality strings containing gaps, markers, NUL or high bytes | `KSEQ-FASTQ-004/006`, quality-invariance method | Quality values do not enter the core or affect cleaning counts | Module and integration |
+| Short, long or missing quality strings | `KSEQ-ERROR-001/002/003/004/007` | Exit 3; no partial output | Module and integration |
+| Line-start @/+, internal markers, terminal bare marker | `KSEQ-COMPAT-010` through `014` | Preserve the fixed parser's record semantics rather than adding a strict pre-parser | Integration |
+| Ordinary/gzip contents independent of filename | All valid and content-error catalog families | Content-based detection; four equivalent input transports | Integration |
+| Optional gzip headers, header CRC, empty and concatenated members | `GZIP-VALID-*`, FASTQ member-split method | Decode one continuous byte stream; member boundaries inside record fields have no parsing meaning | Integration |
 | Damaged gzip header, payload, CRC, size, later member or trailer | `GZIP-ERROR-*`, `GZIP-PREFIX-*` | Exit 4 once gzip magic is recognized | Integration |
 | Empty input and one-byte gzip prefix | `GZIP-PREFIX-*` | Ordinary input detection; exit 3 | Integration |
-| CRLF, header and sequence boundaries near 64 KiB | `INPUT-BOUNDARY-*` | Block boundaries do not alter records or counts | Module |
+| CRLF, header and sequence boundaries near 16 and 64 KiB | `INPUT-BOUNDARY-*` | Block boundaries and the magic-detection offset do not alter records or counts | Module |
+| FASTQ sequences and qualities near 16 and 64 KiB | FASTQ buffer-boundary method | Return the complete sequence; ignore complete quality values | Integration |
 | Single-byte/short reads, EINTR, read and close failures | `INPUT-READ-*` | Retry recoverable interruptions; report read/close failure as exit 4 | Module |
+| kseq initialization and string expansion failures | `KSEQ-RESOURCE-001/002/003` | Resource failure, exit 5; release partial initialization and retain owners on failed realloc | Parser module |
+| Parsed-field and allocation arithmetic limits | `KSEQ-LIMIT-001` | Reject lengths exceeding the supported int range before allocation or narrowing; exit 5 | Parser module |
+| Negative callback results in headers, sequence or quality | `KSEQ-READ-001/002` | Propagate read failure instead of reporting EOF or returning a partial successful record; exit 4 | Parser module |
 | Case, wrapping, line endings and gzip splits of small generated records | `GENERATED-*` | Preserve expected cleaned records and alignment invariants | Integration |
 | Invalid input with stdout, new output, or forced replacement | Input and gzip error families | Empty stdout; no new result; preserve old target and source; no temporary files | Integration |
 | Directory supplied as input | `PATH-INPUT-DIRECTORY` | Exit 4; leave directory contents and existing output intact | Integration |
@@ -53,12 +68,41 @@ The catalog contains the exact raw bytes and expected values for each case.
 The existing CLI, output-write, publication-race, core-failure, and reference
 algorithm tests continue to run alongside this matrix.
 
-The fixed catalog currently contains 12 valid FASTA cases, 17 content-error
-cases, 8 valid gzip variants, 13 gzip-error variants, and 26 incomplete prefixes
-of a small gzip member. Together with the 32 generated groups and path/header
-checks, the expansion adds 603 subprocess scenarios. These are parameterized
-scenarios inside test methods, not 603 new CTest entries. A separate catalog
-integrity test checks identifier uniqueness and lifecycle-case references.
+The fixed catalog contains **32 valid cases** (12 input cases, 14 kseq
+compatibility cases and 6 FASTQ cases), **22 content-error cases**, 8 valid gzip
+variants, 13 gzip-error variants, and 26 incomplete prefixes of a small gzip
+member. The valid catalog produces 384 input/output combinations; content
+errors produce 88 input-path combinations and 80 selected output-lifecycle
+combinations. Three focused FASTQ methods add 16 quality-invariance scenarios,
+36 gzip-field-split scenarios and 12 large-field boundary scenarios.
+
+These combinations are subcases inside test methods, not separate CTest
+entries. A catalog integrity test checks identifier uniqueness and
+lifecycle-case references. The 32 small generated groups, 13 multi-sequence
+datasets and existing CLI/file/error tests remain additional coverage.
+
+## Compatibility cases for 0.2.0
+
+The new expectations describe the pinned HAlign-5 kseq implementation. They
+are explicit fixtures, not results obtained by calling the production reader.
+
+- Old rejection IDs `INPUT-ERROR-010` through `013` are retired. The same bytes
+  now succeed as `KSEQ-COMPAT-001` through `004`: preceding sequence-like text,
+  an indented header, a UTF-8 BOM and a comment before the first marker.
+- Old `INPUT-ERROR-014` is now the successful FASTQ case `KSEQ-FASTQ-001`.
+- `INPUT-VALID-004/005` use rebuilt header expectations. A separator between
+  name and comment becomes the joining space; the first separator after an
+  empty name is consumed. Remaining comment whitespace is retained.
+- `INPUT-VALID-007` now expects final `Tu\r` to become `TU`. Native kseq strips
+  a trailing CR from a line result whose accumulated length is greater than
+  one, even at EOF. `KSEQ-COMPAT-008` separately checks the initial empty CRLF
+  case, whose retained CR becomes N.
+- `KSEQ-COMPAT-010/011` check record/quality interpretation of line-start
+  markers; `012` checks ordinary marker bytes inside a sequence line. `013/014`
+  document that a bare final `>` or `@` can yield no further record.
+
+Diagnostics assert source, error category and determinable returned-record
+number. Tests no longer assert the physical line where an error was found.
 
 ## Multi-sequence result checks
 
@@ -81,13 +125,13 @@ The generated MSA datasets use seed **20261027**, separate from the smaller
 input-representation generator. All fixtures are synthetic; they are not
 biological benchmarks or reference alignments.
 
-Four new end-to-end methods add **127 subprocess scenarios**: 72 fixed-file
+Four end-to-end methods cover **127 subprocess scenarios**: 72 fixed-file
 transport combinations, 28 generated-data combinations, 12 reversed/rotated
 input orders, and 15 output-width combinations. The width checks cover 0, 1, 7,
 80 and 81 through stdout and both named-output formats. Positive widths limit
 each sequence line; width zero requires one unwrapped line per sequence.
 
-Every result is parsed independently and must preserve complete headers, input
+Every result is parsed independently and must preserve expected rebuilt headers, input
 positions, record count and cleaned residues, with equal nonzero row widths,
 only `ACGTUN-`, and no all-gap column. Reordering inputs is checked against the
 new order; the resulting gap layout may change with the selected center.
@@ -104,9 +148,10 @@ bytes of scores); each table is released before the next query. These bounded
 checks exercise actual alignment without a large-data benchmark. The existing
 250,000-character single-sequence stream test remains a separate I/O check.
 
-The [validation record](validation.md) lists observed output widths and the
-location of retained input/output files for each dataset. Output widths are
-observations of the reference core, not golden layouts imposed on other cores.
+The [validation record](validation.md) records the executed matrix and the
+location of retained earlier input/output files and observed-width tables.
+Output widths are observations of the reference core, not golden layouts
+imposed on other cores.
 
 ## Transport and output checks
 
@@ -115,7 +160,7 @@ plain file, gzip file, plain stdin, and gzip stdin. Each path is combined with
 plain stdout, a plain output file, and a gzip output file. The filenames include
 spaces and non-ASCII text; some suffixes deliberately disagree with contents.
 
-Success checks inspect the full headers, record order and count, cleaned
+Success checks inspect the expected rebuilt headers, record order and count, cleaned
 sequences after removing gaps, equal row lengths, permitted residue characters,
 absence of all-gap columns, and the two cleaning counts. Named outputs must not
 leak alignment data to stdout. Python independently decompresses gzip results.
@@ -126,9 +171,10 @@ different runs. Only a single-row result, a specified test core, or a
 compared, because gzip metadata and compression choices are not part of the
 public alignment contract.
 
-Header bytes are checked separately from sequence lines. In particular, an
-embedded CR in a header is preserved when it was not part of a CRLF ending;
-the output checker must not reject every CR byte globally.
+Header bytes are checked separately from sequence lines. For example, an
+embedded CR inside the returned comment is preserved, whereas a CR separating
+the name from the comment becomes the joining space. The output checker does
+not reject every CR byte globally.
 
 Content errors are checked through all four input paths. Selected failures also
 exercise both plain and gzip named outputs, including existing targets passed
@@ -139,14 +185,17 @@ different simultaneous faults.
 ## Boundaries and generated inputs
 
 The byte tests insert each value into a controlled FASTA context and check an
-independent expectation. LF is tested as structure; CR inside a sequence is a
-byte to clean unless immediately followed by LF. A `>` inside a sequence line
-is distinct from a `>` at the start of a line. These structural cases are tested
-separately rather than inferred from a character table.
+independent expectation. LF, CR, and record/quality markers also have separate
+context tests, because kseq may interpret them structurally before cleaning.
+An internal CR followed by another residue remains a byte to clean; a terminal
+CR can be stripped. A `>` inside a sequence line is distinct from a `>` at the
+start of a line. These cases are not inferred from the cleaning table.
 
-Boundary fixtures position delimiters around the 64 KiB buffer size, including
-the two-byte prefix consumed during input detection. Large fixtures contain
-only one sequence, bypassing pairwise dynamic programming. The pre-existing
+Eighty module boundary combinations position delimiters around the 16 KiB
+kseq and 64 KiB decoding buffers, including the two-byte prefix consumed
+during input detection. FASTQ integration checks use sequence and quality
+lengths 16,383/16,384/16,385 and 65,535/65,536/65,537. Large fixtures contain only
+one sequence, bypassing pairwise dynamic programming. The pre-existing
 250,000-character roundtrip also tests compressed data that exceeds a buffer.
 
 Input-operation substitutes deterministically limit reads and inject EINTR or
@@ -155,6 +204,13 @@ Close-failure substitutes release the real descriptor once before reporting an
 error, matching the Linux ownership assumption used by the implementation.
 These substitutes are internal; production CLI and environment variables do
 not expose fault-injection controls.
+
+The vendored-parser tests inject failures into each initialization allocation,
+each parsing allocation of a long FASTQ record, and individual string growth.
+They verify that a failed reallocation preserves the previous owner and
+bytes, and that destruction releases all outstanding allocations. Length tests
+exercise the `INT_MAX` boundary without attempting a multi-gigabyte allocation.
+Read-error tests cover all record regions and both EOF/error distinctions.
 
 Generated tests use seed **20261026** and **32 groups**, each with 1–6 records
 and 1–32 residues per record. Expected records are chosen first; casing,
@@ -183,8 +239,9 @@ cmake --build build --parallel 2
 python3 tests/integration.py --binary build/msakit \
   --test-driver build/msakit_test_driver --suite contract
 
-# Focus on the new I/O module case families:
+# Focus on the I/O and parser case families:
 ./build/msakit_unit_tests --test-case='*INPUT-*'
+./build/msakit_unit_tests --test-case='*KSEQ-*'
 ```
 
 For memory and undefined-behavior diagnostics:
@@ -200,12 +257,12 @@ To add an input rule or regression:
 
 1. Choose an unused stable identifier in the appropriate catalog family. Keep
    existing identifiers when adding or reordering cases.
-2. Supply literal input bytes and independently determined expected headers,
+2. Supply literal input bytes and independently determined rebuilt headers,
    cleaned sequences and counts, or the documented error code and location.
 3. Include only one fault when asserting its error category. For content errors,
-   check the physical line where the problem is discovered and the affected
-   record; an empty file has no valid physical line to assert. Match diagnostic
-   meaning and location, not entire operating-system or zlib error strings.
+   check the affected record where one exists; input with no records has no
+   returned-record number to assert. Match diagnostic meaning and source, not
+   entire operating-system or zlib error strings or physical line numbers.
 4. Use the shared matrix for ordinary inputs. Put precise byte/read boundaries
    in module tests and container-specific cases in the gzip families. Select
    representative file-lifetime checks rather than multiplying every dimension.
@@ -223,7 +280,8 @@ InputCase("INPUT-VALID-013", b">example\nacR\n",
 
 This is an illustration of adding a case, not an additional checked-in fixture.
 The input is automatically exercised through the valid-case transport matrix
-when the entry is added to `VALID_CASES`.
+when the entry is added to `VALID_CASES`, `KSEQ_COMPAT_CASES`, or
+`KSEQ_FASTQ_CASES`. The shared `ALL_VALID_CASES` collection includes all three.
 
 No real sequence data, downloads, optional testing packages, or changes to
 system settings are needed. The tests establish software behavior, not

@@ -1,4 +1,4 @@
-#include "detail/app.hpp"
+#include "internal.hpp"
 #include "msakit/core.hpp"
 
 int main(int argc, char** argv) {

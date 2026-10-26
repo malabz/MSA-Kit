@@ -4,7 +4,8 @@
   "components": {
     "CLI11": "2.6.1",
     "spdlog": "1.16.0",
-    "doctest": "2.4.12"
+    "doctest": "2.4.12",
+    "kseq": "30JAN2023 (HAlign-5 snapshot, with MSA-Kit safety patch)"
   },
   "license_sources": [
     {
@@ -163,6 +164,24 @@
     "extern/spdlog/include/spdlog/spdlog.h": "54283b3e3bf96c3df22c40caea526ffe0bbf203b5f76a98aa130b91a50487195",
     "extern/spdlog/include/spdlog/stopwatch.h": "60f3aaed933185261ae603cc589cd39ebf93ef78321548871d469fb566903c44",
     "extern/spdlog/include/spdlog/tweakme.h": "8e641df000560090a11adb04eff3f1a18e814f6eb8f2a9a9a1f22c0dcc572f82",
-    "extern/spdlog/include/spdlog/version.h": "c42673543e21bd0ef04671d76c5f593864d4422ec81282c340a94b5a2aa1e4af"
-  }
+    "extern/spdlog/include/spdlog/version.h": "c42673543e21bd0ef04671d76c5f593864d4422ec81282c340a94b5a2aa1e4af",
+    "extern/kseq/kseq.h": "1e14897cee53de27cd8f63af8b7d6d6a00ecaf6b2e2f2ed458079401fc08a305"
+  },
+  "adapted_files": [
+    {
+      "path": "extern/kseq/kseq.h",
+      "source_path": "include/kseq.h",
+      "source_git_blob": "c07a11b1d9e407ae06879d88f4ede7e7776f64c0",
+      "source_sha256": "9279bfe0f8bfcfe507d2852b838d2156d793f70b76ae9c63e3f6d381239ba901",
+      "license": "MIT, retained in the header",
+      "modifications": [
+        "Check initialization and allocation failures; release partial initialization.",
+        "Use a checked reserve helper and temporary realloc pointers; cap string lengths at INT_MAX before arithmetic or conversion.",
+        "Propagate negative and oversized read callbacks, comment/sequence read failures, and quality parsing errors.",
+        "Add -4 resource return status and compile-time allocator hooks for unit tests; preserve normal record semantics.",
+        "Reformat macro whitespace for readable local maintenance."
+      ],
+      "tests": "tests/test_kseq.cpp"
+    }
+  ]
 }

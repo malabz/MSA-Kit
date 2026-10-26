@@ -1,6 +1,5 @@
+#include "internal.hpp"
 #include "msakit/core.hpp"
-#include "detail/checked.hpp"
-#include "detail/errors.hpp"
 
 #include <algorithm>
 #include <cstdint>

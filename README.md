@@ -4,7 +4,7 @@ A reusable template for building multiple sequence alignment tools with consiste
 
 MSA-Kit is designed so that developers can copy the project, replace its alignment core, and reuse the surrounding sequence readers, writers, command-line interface, and result checks.
 
-**Version 0.1.0.** The C++ framework, reference star core, build configuration, and synthetic tests are implemented. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
+**Version 0.2.0.** Sequence records are parsed with the pinned HAlign-5 `kseq.h`, and `src` contains four files. Developers primarily replace `src/align.cpp`. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
 
 ## Documentation
 
@@ -18,14 +18,14 @@ MSA-Kit is designed so that developers can copy the project, replace its alignme
 
 ## Features
 
-- DNA and RNA input in FASTA, including gzip-compressed input and standard input.
+- DNA and RNA input in FASTA or FASTQ, including gzip-compressed input and standard input; FASTQ quality values are ignored after parsing.
 - HAlign-style nucleotide cleaning, with explicit errors for pre-existing `-` or `.` gap characters.
-- Aligned FASTA or gzip FASTA output, with original record order and complete headers retained.
+- Aligned FASTA or gzip FASTA output, with original record order and headers rebuilt from kseq's `name` and `comment` fields.
 - A fixed command-line interface, documented exit codes, and logs on standard error.
 - A small, in-memory C++ interface for replacing the alignment core.
 - A deterministic reference star alignment and small synthetic contract tests.
 
-The supported platform is Linux. The implementation uses C++20 and CMake 3.18 or newer. CLI11 2.6.1, spdlog 1.16.0, and doctest 2.4.12 are bundled at fixed versions; configuration and compilation do not download dependencies. Install a C++20 compiler, CMake, and zlib development files on the system. Tests additionally require Python 3.8 or newer; the executable does not require Python.
+The supported platform is Linux. The implementation uses C++20 and CMake 3.18 or newer. CLI11 2.6.1, spdlog 1.16.0, doctest 2.4.12, and kseq from the pinned HAlign-5 revision are bundled; configuration and compilation do not download dependencies. Install a C++20 compiler, CMake, and zlib development files on the system. Tests additionally require Python 3.8 or newer; the executable does not require Python.
 
 ## Architecture
 
@@ -56,9 +56,19 @@ Alignment align(std::span<const SequenceRecord> input);
 }
 ```
 
-The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/core/star.cpp](src/core/star.cpp).
+The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/align.cpp](src/align.cpp). The source directory contains exactly four files:
 
-Every returned row must preserve its corresponding cleaned input sequence when gaps are removed. All rows must have the same length, and no column may consist entirely of gaps. Complete headers and duplicate records are preserved by input position rather than matched through a unique-name map.
+```text
+src/
+├── main.cpp         # Program entry point
+├── framework.cpp    # CLI, kseq input, cleaning, validation, and output
+├── align.cpp        # Replaceable reference star alignment
+└── internal.hpp     # Shared internal declarations and checked arithmetic
+```
+
+The executable and test programs link the same framework library. The core depends only on the C++ standard library; the vendored parser lives in `extern/kseq/kseq.h`.
+
+Every returned row must preserve its corresponding cleaned input sequence when gaps are removed. All rows must have the same length, and no column may consist entirely of gaps. Rebuilt headers and duplicate records are preserved by input position rather than matched through a unique-name map.
 
 ## Build and test
 
@@ -81,6 +91,7 @@ Use `./build/msakit` directly, or `msakit` after installing it on `PATH`:
 ```bash
 msakit -i input.fasta -o aligned.fasta
 msakit -i input.fasta.gz -o aligned.fasta.gz
+msakit -i reads.fastq.gz -o aligned.fasta
 cat input.fasta | msakit -i - -o - > aligned.fasta
 ```
 
@@ -112,13 +123,25 @@ The supplied core is labeled **Reference star alignment — replaceable core**. 
 
 ## Input cleaning at a glance
 
-Accepted lowercase `a/c/g/t/u/n` becomes uppercase. `A/C/G/T/U/N` is preserved, and other sequence bytes become `N`. Pre-existing `-` or `.` causes an input error. FASTA line endings are structural; spaces and tabs within sequence lines follow the byte-cleaning rule and become `N`. Headers are not cleaned.
+Cleaning applies to the sequence bytes returned by kseq. Accepted lowercase `a/c/g/t/u/n` becomes uppercase. `A/C/G/T/U/N` is preserved, and other sequence bytes become `N`. Pre-existing `-` or `.` causes an input error. Spaces and tabs that remain in a parsed sequence become `N`. Headers and FASTQ qualities do not undergo sequence cleaning.
 
 This cleaning can discard ambiguity information. Output preservation is checked against the cleaned sequences supplied to the core. T and U remain distinct output characters; the reference core treats them as equivalent only when scoring.
 
+## Changes from 0.1.0
+
+The public core interface, CLI options, exit-code categories, gzip checks, and output protection remain unchanged. Input records now follow the fixed kseq version rather than the old strict FASTA parser:
+
+- FASTQ and mixed FASTA/FASTQ records recognized by kseq are accepted. Qualities are parsed for length consistency and discarded; output is always aligned FASTA.
+- Headers use `name` plus a nonempty `comment`, joined by one space when both are present. For example, `>sample\tinfo` produces `sample info`; original separator whitespace is not preserved byte for byte.
+- When seeking a record, kseq skips preceding bytes until `>` or `@`. At the start of a sequence line, `>` or `@` starts the next record and `+` begins the quality section. The same bytes inside an ordinary sequence line are sequence content.
+- CR and end-of-file handling follow kseq. For example, a terminal CR in `AC\r` is stripped before cleaning. Empty CRLF lines have context-dependent behavior; see the explicit cases in the [design](docs/design.md#4-input-contract).
+- Content errors identify the source and a record number when available; exact physical line numbers are no longer promised. No returned records, blank returned headers, empty sequences, existing gaps, and reported quality-length errors are rejected.
+
+The parser includes checked allocation and length handling, with each parsed field limited to `INT_MAX` bytes. These safety patches do not change normal record semantics. A syntactically unusual file may therefore be accepted, skipped in part, or rejected differently than in 0.1.0; callers needing a stricter format policy should validate it before invoking MSA-Kit.
+
 ## HAlign-5 provenance and licensing
 
-The design is based on [HAlign-5 at commit `b0d5608811d44e30bc323da54f0583ceaaf684d2`](https://github.com/pinglu-zhang/HAlign-5/tree/b0d5608811d44e30bc323da54f0583ceaaf684d2), particularly its CLI organization, reader/writer abstractions, and nucleotide-cleaning table. The design specification records the file-level provenance and intentional changes.
+The design is based on [HAlign-5 at commit `b0d5608811d44e30bc323da54f0583ceaaf684d2`](https://github.com/pinglu-zhang/HAlign-5/tree/b0d5608811d44e30bc323da54f0583ceaaf684d2), particularly its CLI organization, `kseq_init`/`kseq_read`/`kseq_destroy` record lifecycle, header reconstruction, reader/writer abstractions, and nucleotide-cleaning table. The design specification records the file-level provenance and intentional changes.
 
 MSA-Kit is distributed under the [MIT license](LICENSE). HAlign-5's copyright and permission notice are retained for the adapted cleaning code. Third-party libraries retain their own license and attribution requirements; [the notices](THIRD_PARTY_NOTICES.md) and [dependency manifest](extern/provenance.json) record the sources and file checksums.
 

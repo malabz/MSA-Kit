@@ -1,8 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "detail/errors.hpp"
-#include "detail/io.hpp"
-#include "detail/io_testing.hpp"
+#include "internal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -99,7 +97,7 @@ public:
     int write_calls = 0;
     bool marker_created = false;
 
-    ssize_t write_fd(int fd, const void* data, std::size_t size) noexcept override {
+    std::ptrdiff_t write_fd(int fd, const void* data, std::size_t size) noexcept override {
         ++write_calls;
         if (fault_ == Fault::Write) { errno = ENOSPC; return -1; }
         if (fault_ == Fault::ShortWrites) {
@@ -163,7 +161,7 @@ public:
     int close_calls = 0;
     int last_fd = -1;
 
-    ssize_t read_fd(int fd, void* data, std::size_t size) noexcept override {
+    std::ptrdiff_t read_fd(int fd, void* data, std::size_t size) noexcept override {
         last_fd = fd;
         ++read_calls;
         if (std::find(interrupted_calls.begin(), interrupted_calls.end(), read_calls) !=
@@ -200,13 +198,13 @@ void require_input_closed_once(const ScriptedInputOperations& operations) {
 }
 }  // namespace
 
-TEST_CASE("FASTA reading preserves full duplicate headers and original record positions") {
+TEST_CASE("Kseq rebuilds duplicate headers from name and comment and preserves record positions") {
     TempDirectory temporary;
     const auto input = temporary.path / "records.fa";
     put(input, "\n> same\t description  \r\nac\r\nguR\n\n> same\t description  \nTu");
     const auto data = read_input(input.string());
     REQUIRE(data.records.size() == 2);
-    CHECK(data.records[0].header == " same\t description  ");
+    CHECK(data.records[0].header == "same\t description  ");
     CHECK(data.records[1].header == data.records[0].header);
     CHECK(data.records[0].sequence == "ACGUN");
     CHECK(data.records[1].sequence == "TU");
@@ -215,7 +213,7 @@ TEST_CASE("FASTA reading preserves full duplicate headers and original record po
     CHECK(data.identity.has_value());
 }
 
-TEST_CASE("Sequence cleaning is byte based and only actual line endings are removed") {
+TEST_CASE("Sequence cleaning acts on bytes returned by kseq including its final CR handling") {
     TempDirectory temporary;
     const auto input = temporary.path / "bytes.fa";
     std::string bytes = ">s\nnN \t";
@@ -225,15 +223,15 @@ TEST_CASE("Sequence cleaning is byte based and only actual line endings are remo
     put(input, bytes);
     const auto data = read_input(input.string());
     REQUIRE(data.records.size() == 1);
-    CHECK(data.records[0].sequence == std::string(7, 'N'));
+    CHECK(data.records[0].sequence == std::string(6, 'N'));
     CHECK(data.stats.uppercase_conversions == 1);
-    CHECK(data.stats.unknown_replacements == 5);
+    CHECK(data.stats.unknown_replacements == 4);
 }
 
-TEST_CASE("Invalid FASTA and pre-existing gaps are content errors") {
+TEST_CASE("Invalid returned records quality strings and pre-existing gaps are content errors") {
     TempDirectory temporary;
     const auto input = temporary.path / "invalid.fa";
-    for (const std::string text : {"", "\n\n", "AC\n", " \n>s\nA", ">\nAC", "> \t\nAC", ">s\n", ">a\n>b\nAC", ">a\nAC\n>b\n", ">s\nA-C", ">s\nA.C", "@s\nAC\n+\n!!"}) {
+    for (const std::string text : {"", "\n\n", "AC\n", ">\nAC", "> \t\nAC", ">s\n", ">a\n>b\nAC", ">a\nAC\n>b\n", ">s\nA-C", ">s\nA.C", "@s\nAC\n+\n!", "@s\nAC\n+\n!!!"}) {
         INFO(text);
         put(input, text);
         error_code([&] { (void)read_input(input.string()); }, kInputError);
@@ -241,6 +239,47 @@ TEST_CASE("Invalid FASTA and pre-existing gaps are content errors") {
     error_code([&] { (void)read_input((temporary.path / "missing.fa").string()); }, kIoError);
     put(input, ">s\n \t\n");
     CHECK(read_input(input.string()).records[0].sequence == "NN");
+}
+
+TEST_CASE("INPUT-KSEQ-001 FASTQ qualities and their wrapping do not change prepared sequences") {
+    TempDirectory temporary;
+    const auto input = temporary.path / "records.data";
+    for (const std::string qualities : {"!!!!\n", "\"#\n$%\n", "A@\n+.\n"}) {
+        for (const bool compressed : {false, true}) {
+            INFO("quality bytes = ", qualities, ", gzip = ", compressed);
+            const std::string raw = "@same\tdescription\r\nac\r\ngu\n+ignored title\n" +
+                qualities + ">same description\nTUN\n@third\nR\n+\n!\n";
+            put(input, compressed ? gzip(raw) : raw);
+            const auto data = read_input(input.string());
+            REQUIRE(data.records.size() == 3);
+            CHECK(data.records[0].header == "same description");
+            CHECK(data.records[1].header == "same description");
+            CHECK(data.records[2].header == "third");
+            CHECK(data.records[0].sequence == "ACGU");
+            CHECK(data.records[1].sequence == "TUN");
+            CHECK(data.records[2].sequence == "N");
+            CHECK(data.stats.uppercase_conversions == 4);
+            CHECK(data.stats.unknown_replacements == 1);
+        }
+    }
+}
+
+TEST_CASE("INPUT-KSEQ-002 content diagnostics identify the source and returned record") {
+    TempDirectory temporary;
+    const auto input = temporary.path / "invalid.data";
+    for (const std::string bad_record : {">\nAC\n", ">bad\n", ">bad\nA-C\n",
+                                         "@bad\nAC\n+\n!\n"}) {
+        put(input, ">good\nAC\n" + bad_record);
+        try {
+            (void)read_input(input.string());
+            FAIL("The second record is invalid");
+        } catch (const Error& error) {
+            CHECK(error.exit_code() == kInputError);
+            const std::string message = error.what();
+            CHECK(message.find(input.string()) != std::string::npos);
+            CHECK(message.find("record 2:") != std::string::npos);
+        }
+    }
 }
 
 TEST_CASE("Gzip detection is independent of extension and concatenated members are decoded") {
@@ -442,8 +481,8 @@ TEST_CASE("INPUT-BYTES-001 all 256 input bytes follow the independent cleaning c
         }
 
         // A declarative oracle independent of the production lookup table.
-        // The byte is surrounded by residues, so CR and '>' cannot accidentally
-        // acquire their line-ending/header meaning. LF still separates lines.
+        // The byte is surrounded by residues, so CR, '>', '@' and '+' cannot
+        // acquire their line-ending/record-marker meaning. LF separates lines.
         std::string expected = "ANC";
         std::size_t lower = 0;
         std::size_t unknown = 0;
@@ -480,11 +519,20 @@ TEST_CASE("INPUT-STRUCTURE-001 LF CRLF and header markers have context-dependent
     const std::vector<Case> cases{
         {"line-endings", ">one\r\nA\r\nC\n", {{"one", "AC"}}, 0},
         {"embedded-cr", ">one\nA\rC\n", {{"one", "ANC"}}, 1},
-        {"final-cr", ">one\nAC\r", {{"one", "ACN"}}, 1},
+        {"final-cr", ">one\nAC\r", {{"one", "AC"}}, 0},
         {"double-cr-before-lf", ">one\nA\r\r\nC\n", {{"one", "ANC"}}, 1},
         {"header-markers", ">one>description\nA>C\n>two\nT\n",
             {{"one>description", "ANC"}, {"two", "T"}}, 1},
-        {"header-internal-cr", ">one\rdescription\nAC\n", {{"one\rdescription", "AC"}}, 0},
+        {"header-internal-cr", ">one\rdescription\nAC\n", {{"one description", "AC"}}, 0},
+        {"comment-internal-cr", ">one description\rmore\nAC\n", {{"one description\rmore", "AC"}}, 0},
+        {"header-tab", ">one\tdescription\nAC\n", {{"one description", "AC"}}, 0},
+        {"header-leading-space", ">  one description\nAC\n", {{" one description", "AC"}}, 0},
+        {"header-trailing-separator", ">one\t\nAC\n", {{"one", "AC"}}, 0},
+        {"preamble", "junk\n \t>one\nAC\n", {{"one", "AC"}}, 0},
+        {"embedded-at-plus", ">one\nA@+C\n", {{"one", "ANNC"}}, 2},
+        {"at-record", ">one\nAC\n@two\nTU\n+ignored\n!!\n", {{"one", "AC"}, {"two", "TU"}}, 0},
+        {"plus-quality", ">one\nAC\n+ignored\n!!\n", {{"one", "AC"}}, 0},
+        {"empty-crlf", ">one\n\r\nAC\n", {{"one", "NAC"}}, 1},
     };
     for (const auto& item : cases) {
         INFO("case = ", item.id);
@@ -503,46 +551,48 @@ TEST_CASE("INPUT-STRUCTURE-001 LF CRLF and header markers have context-dependent
 TEST_CASE("INPUT-BOUNDARY-001 structural bytes survive both decoded and prefix-offset buffer boundaries") {
     TempDirectory temporary;
     const auto input = temporary.path / "boundary.data";
-    constexpr std::size_t buffer = 65'536;
+    // Test both kseq's 16 KiB buffer and the byte decoder's 64 KiB buffer.
     // gzip decoded chunks start at offset 0. Plain input first returns its
     // two-byte magic probe, then full chunks, so its first boundary is 65,538.
     // All offsets below are zero-based positions in the uncompressed stream.
-    for (const auto offset : {buffer - 1, buffer, buffer + 1, buffer + 2, buffer + 3}) {
-        for (const auto layout : {0, 1, 2, 3}) {
-            std::string raw;
-            std::string header;
-            std::string sequence;
-            std::size_t lower = 0;
-            if (layout == 0) {
-                header = std::string(offset - 1, 'h');
-                raw = ">" + header + "\r\nac\n";  // CR at offset.
-                sequence = "AC";
-                lower = 2;
-            } else if (layout == 1) {
-                header = "s";
-                sequence = std::string(offset - 3, 'A') + "C";
-                raw = ">s\n" + std::string(offset - 3, 'A') + "\r\nc";
-                lower = 1;
-            } else if (layout == 2) {
-                header = "s";
-                sequence = "AC";
-                raw = std::string(offset, '\n') + ">s\nac\n";  // '>' at offset.
-                lower = 2;
-            } else {
-                header = std::string(offset - 2, 'h');
-                sequence = "AC";
-                raw = ">" + header + "\nac\n";  // First residue at offset.
-                lower = 2;
-            }
-            for (const bool compressed : {false, true}) {
-                INFO("offset = ", offset, ", layout = ", layout, ", gzip = ", compressed);
-                put(input, compressed ? gzip(raw) : raw);
-                const auto data = read_input(input.string());
-                REQUIRE(data.records.size() == 1);
-                CHECK(data.records[0].header == header);
-                CHECK(data.records[0].sequence == sequence);
-                CHECK(data.stats.uppercase_conversions == lower);
-                CHECK(data.stats.unknown_replacements == 0);
+    for (const auto buffer : {std::size_t(16'384), std::size_t(65'536)}) {
+        for (const auto offset : {buffer - 1, buffer, buffer + 1, buffer + 2, buffer + 3}) {
+            for (const auto layout : {0, 1, 2, 3}) {
+                std::string raw;
+                std::string header;
+                std::string sequence;
+                std::size_t lower = 0;
+                if (layout == 0) {
+                    header = std::string(offset - 1, 'h');
+                    raw = ">" + header + "\r\nac\n";  // CR at offset.
+                    sequence = "AC";
+                    lower = 2;
+                } else if (layout == 1) {
+                    header = "s";
+                    sequence = std::string(offset - 3, 'A') + "C";
+                    raw = ">s\n" + std::string(offset - 3, 'A') + "\r\nc";
+                    lower = 1;
+                } else if (layout == 2) {
+                    header = "s";
+                    sequence = "AC";
+                    raw = std::string(offset, '\n') + ">s\nac\n";  // '>' at offset.
+                    lower = 2;
+                } else {
+                    header = std::string(offset - 2, 'h');
+                    sequence = "AC";
+                    raw = ">" + header + "\nac\n";  // First residue at offset.
+                    lower = 2;
+                }
+                for (const bool compressed : {false, true}) {
+                    INFO("offset = ", offset, ", layout = ", layout, ", gzip = ", compressed);
+                    put(input, compressed ? gzip(raw) : raw);
+                    const auto data = read_input(input.string());
+                    REQUIRE(data.records.size() == 1);
+                    CHECK(data.records[0].header == header);
+                    CHECK(data.records[0].sequence == sequence);
+                    CHECK(data.stats.uppercase_conversions == lower);
+                    CHECK(data.stats.unknown_replacements == 0);
+                }
             }
         }
     }
@@ -551,28 +601,30 @@ TEST_CASE("INPUT-BOUNDARY-001 structural bytes survive both decoded and prefix-o
 TEST_CASE("INPUT-READ-001 deterministic short reads and EINTR preserve plain and gzip input") {
     TempDirectory temporary;
     const auto input = temporary.path / "short.data";
-    const std::string raw = ">one description\r\nacgR\t\r\n>one description\nTuN";
     const std::vector<std::vector<std::size_t>> schedules{{1}, {2, 1, 7, 3}, {65'536}};
-    for (const bool compressed : {false, true}) {
-        const auto bytes = compressed ? gzip(raw) : raw;
-        put(input, bytes);
-        for (std::size_t schedule = 0; schedule < schedules.size(); ++schedule) {
-            for (const bool interrupted : {false, true}) {
-                INFO("gzip = ", compressed, ", schedule = ", schedule, ", EINTR = ", interrupted);
-                ScriptedInputOperations operations(schedules[schedule]);
-                if (interrupted) operations.interrupted_calls = {1, 3};
-                const auto data = read_input_with_operations(input.string(), operations);
-                REQUIRE(data.records.size() == 2);
-                CHECK(data.records[0].header == "one description");
-                CHECK(data.records[1].header == "one description");
-                CHECK(data.records[0].sequence == "ACGNN");
-                CHECK(data.records[1].sequence == "TUN");
-                CHECK(data.stats.uppercase_conversions == 4);
-                CHECK(data.stats.unknown_replacements == 2);
-                CHECK(operations.bytes_read == bytes.size());
-                CHECK(operations.interrupts == (interrupted ? 2 : 0));
-                require_input_closed_once(operations);
-                CHECK(get(input) == bytes);
+    for (const std::string raw : {">one description\r\nacgR\t\r\n>one description\nTuN",
+                                 "@one description\r\nacgR\t\r\n+\n!!\n!!!\n@one description\nTuN\n+\n!!!"}) {
+        for (const bool compressed : {false, true}) {
+            const auto bytes = compressed ? gzip(raw) : raw;
+            put(input, bytes);
+            for (std::size_t schedule = 0; schedule < schedules.size(); ++schedule) {
+                for (const bool interrupted : {false, true}) {
+                    INFO("gzip = ", compressed, ", schedule = ", schedule, ", EINTR = ", interrupted);
+                    ScriptedInputOperations operations(schedules[schedule]);
+                    if (interrupted) operations.interrupted_calls = {1, 3};
+                    const auto data = read_input_with_operations(input.string(), operations);
+                    REQUIRE(data.records.size() == 2);
+                    CHECK(data.records[0].header == "one description");
+                    CHECK(data.records[1].header == "one description");
+                    CHECK(data.records[0].sequence == "ACGNN");
+                    CHECK(data.records[1].sequence == "TUN");
+                    CHECK(data.stats.uppercase_conversions == 4);
+                    CHECK(data.stats.unknown_replacements == 2);
+                    CHECK(operations.bytes_read == bytes.size());
+                    CHECK(operations.interrupts == (interrupted ? 2 : 0));
+                    require_input_closed_once(operations);
+                    CHECK(get(input) == bytes);
+                }
             }
         }
     }
@@ -581,19 +633,21 @@ TEST_CASE("INPUT-READ-001 deterministic short reads and EINTR preserve plain and
 TEST_CASE("INPUT-READ-002 read errors before during and after data never return partial records") {
     TempDirectory temporary;
     const auto input = temporary.path / "read-failure.data";
-    const std::string raw = ">one\nACGT\n>two\nTUN\n";
-    for (const bool compressed : {false, true}) {
-        const auto bytes = compressed ? gzip(raw) : raw;
-        put(input, bytes);
-        for (const auto fail_after : {std::size_t(0), std::size_t(1), bytes.size() / 2, bytes.size()}) {
-            INFO("gzip = ", compressed, ", fail after bytes = ", fail_after);
-            ScriptedInputOperations operations({7});
-            operations.fail_after = fail_after;
-            error_code([&] { (void)read_input_with_operations(input.string(), operations); }, kIoError);
-            CHECK(operations.bytes_read == fail_after);
-            require_input_closed_once(operations);
-            CHECK(get(input) == bytes);
-            no_temporary_files(temporary);
+    for (const std::string raw : {">one\nACGT\n>two\nTUN\n",
+                                 "@one\nACGT\n+ignored\n!!\n!!\n@two\nTUN\n+\n!!!\n"}) {
+        for (const bool compressed : {false, true}) {
+            const auto bytes = compressed ? gzip(raw) : raw;
+            put(input, bytes);
+            for (const auto fail_after : {std::size_t(0), std::size_t(1), bytes.size() / 2, bytes.size()}) {
+                INFO("gzip = ", compressed, ", fail after bytes = ", fail_after);
+                ScriptedInputOperations operations({7});
+                operations.fail_after = fail_after;
+                error_code([&] { (void)read_input_with_operations(input.string(), operations); }, kIoError);
+                CHECK(operations.bytes_read == fail_after);
+                require_input_closed_once(operations);
+                CHECK(get(input) == bytes);
+                no_temporary_files(temporary);
+            }
         }
     }
 }

@@ -14,8 +14,9 @@ import tempfile
 import unittest
 import zlib
 
-from input_cases import (ERROR_CASES, GENERATOR_SEED, GZIP_RAW, LIFECYCLE_ERROR_IDS,
-                         VALID_CASES, generated_cases, gzip_prefix_cases,
+from input_cases import (ALL_ERROR_CASES, ALL_VALID_CASES, GENERATOR_SEED, GZIP_RAW,
+                         KSEQ_FASTQ_CASES, LIFECYCLE_ERROR_IDS,
+                         generated_cases, gzip_member, gzip_prefix_cases,
                          invalid_gzip_cases, valid_gzip_cases)
 from msa_cases import fixed_msa_cases, generated_msa_cases
 
@@ -146,13 +147,10 @@ class ProgramTests(unittest.TestCase):
                 if case.reason:
                     self.assertIn(case.reason, result.stderr, context)
                     self.assertIn(os.fsencode(str(source)) + b":", result.stderr, context)
-                if case.line is not None or case.record is not None:
-                    location = re.search(rb"\bline (\d+), record (\d+):", result.stderr)
+                if case.record is not None:
+                    location = re.search(rb"\brecord (\d+):", result.stderr)
                     self.assertIsNotNone(location, context)
-                    if case.line is not None:
-                        self.assertEqual(int(location.group(1)), case.line, context)
-                    if case.record is not None:
-                        self.assertEqual(int(location.group(2)), case.record, context)
+                    self.assertEqual(int(location.group(1)), case.record, context)
                 self.assertEqual({path.name for path in work.iterdir()}, original_files, context)
                 return
             if destination == "-":
@@ -179,11 +177,11 @@ class ProgramTests(unittest.TestCase):
 
     def test_input_catalog_identifiers_and_lifecycle_selection(self):
         msa_cases = (*fixed_msa_cases(), *generated_msa_cases())
-        all_cases = (*VALID_CASES, *ERROR_CASES, *valid_gzip_cases(), *invalid_gzip_cases(),
+        all_cases = (*ALL_VALID_CASES, *ALL_ERROR_CASES, *valid_gzip_cases(), *invalid_gzip_cases(),
                      *gzip_prefix_cases(), *(case for case, _ in generated_cases()), *msa_cases)
         identifiers = [case.case_id for case in all_cases]
         self.assertEqual(len(identifiers), len(set(identifiers)), "Duplicate input case ID")
-        self.assertTrue(LIFECYCLE_ERROR_IDS.issubset({case.case_id for case in ERROR_CASES}),
+        self.assertTrue(LIFECYCLE_ERROR_IDS.issubset({case.case_id for case in ALL_ERROR_CASES}),
                         "Unknown case in lifecycle selection")
         for identifier in identifiers:
             self.assertRegex(identifier, r"^[A-Z]+(?:-[A-Z]+)*-\d{3}$")
@@ -281,8 +279,8 @@ class ProgramTests(unittest.TestCase):
             self.assert_alignment_contract(wrapped, headers, sequences, line_width=0)
 
     def test_named_valid_input_transport_matrix(self):
-        # 12 named cases x 4 input paths x 3 output paths.
-        for case in VALID_CASES:
+        # Include FASTA, FASTQ, mixed records and explicit native kseq semantics.
+        for case in ALL_VALID_CASES:
             for input_mode in INPUT_MODES:
                 for output_mode in OUTPUT_MODES:
                     with self.subTest(case=case.case_id, input=input_mode, output=output_mode,
@@ -290,13 +288,13 @@ class ProgramTests(unittest.TestCase):
                         self.exercise_input_case(case, input_mode, output_mode)
 
     def test_named_content_errors_all_input_paths(self):
-        for case in ERROR_CASES:
+        for case in ALL_ERROR_CASES:
             for input_mode in INPUT_MODES:
                 with self.subTest(case=case.case_id, input=input_mode, raw=case.raw):
                     self.exercise_input_case(case, input_mode)
 
     def test_named_content_errors_preserve_new_and_existing_targets(self):
-        for case in ERROR_CASES:
+        for case in ALL_ERROR_CASES:
             if case.case_id not in LIFECYCLE_ERROR_IDS:
                 continue
             for input_mode in INPUT_MODES:
@@ -306,6 +304,47 @@ class ProgramTests(unittest.TestCase):
                                           output=output_mode, existing=existing, raw=case.raw):
                             self.exercise_input_case(case, input_mode, output_mode,
                                                      existing=existing)
+
+    def test_fastq_quality_values_do_not_change_prepared_sequences(self):
+        # Qualities can contain sequence gap symbols, record markers, NUL and
+        # non-ASCII bytes. Only their returned length matters to kseq.
+        for quality in (b"!!!!", b"-.@+", b"\x00\xff\x80>", b"~~##"):
+            raw = b"@name\tdesc\nacRn\n+\n" + quality + b"\n"
+            case = replace(KSEQ_FASTQ_CASES[0], raw=raw, headers=(b"name desc",),
+                           sequences=(b"ACNN",), uppercase=3, unknown=1)
+            for index, input_mode in enumerate(INPUT_MODES):
+                with self.subTest(quality=quality, input=input_mode):
+                    self.exercise_input_case(case, input_mode,
+                                             OUTPUT_MODES[index % len(OUTPUT_MODES)])
+
+    def test_fastq_gzip_members_can_split_any_record_field(self):
+        case = KSEQ_FASTQ_CASES[1]
+        raw = case.raw
+        cuts = (3, raw.index(b"ac") + 1, raw.index(b"\r\n") + 1,
+                raw.index(b"+label") + 2, raw.index(b"I!") + 1,
+                raw.index(b"@same", 1) + 1)
+        for cut in cuts:
+            wire = (gzip_member(b"") + gzip_member(raw[:cut], header_crc=True)
+                    + gzip_member(b"") + gzip_member(raw[cut:]) + gzip_member(b""))
+            self.assertEqual(gzip.decompress(wire), raw)
+            for input_mode in ("gzip-file", "gzip-stdin"):
+                for output_mode in OUTPUT_MODES:
+                    with self.subTest(case=case.case_id, split=cut, input=input_mode,
+                                      output=output_mode):
+                        self.exercise_input_case(case, input_mode, output_mode, wire=wire)
+
+    def test_fastq_sequence_and_quality_buffer_boundaries(self):
+        # Single records avoid pairwise DP while crossing kseq's 16 KiB and
+        # the decoding layer's 64 KiB buffers in both sequence and quality.
+        for size in (16_383, 16_384, 16_385, 65_535, 65_536, 65_537):
+            sequence = (b"ACGTUN" * (size // 6 + 1))[:size]
+            quality = (b"@+>.-!" * (size // 6 + 1))[:size]
+            raw = b"@boundary\tdescription\r\n" + sequence + b"\r\n+\r\n" + quality + b"\r\n"
+            case = replace(KSEQ_FASTQ_CASES[0], raw=raw,
+                           headers=(b"boundary description",), sequences=(sequence,))
+            for input_mode in ("plain-stdin", "gzip-file"):
+                with self.subTest(size=size, input=input_mode):
+                    self.exercise_input_case(case, input_mode, "gzip-file", line_width=0)
 
     def test_optional_gzip_headers_and_member_splits(self):
         for case in valid_gzip_cases():
@@ -412,11 +451,14 @@ class ProgramTests(unittest.TestCase):
         self.assertIn(b"lowercase conversions: 1", result.stderr)
         self.assertIn(b"replaced with N: 0", result.stderr)
 
-    def test_header_spacing_and_duplicate_names_are_preserved(self):
+    def test_header_reconstruction_and_duplicate_names(self):
         header = b"  shared name\t long  "
         raw = b">" + header + b"\r\nac\r\n>" + header + b"\r\nag\r\n"
         result = self.align_bytes(raw)
-        self.assert_alignment_contract(result.stdout, [header, header], [b"AC", b"AG"])
+        # The first separator after the marker is consumed by kseq; an empty
+        # name is rebuilt from the comment, without an extra prefix space.
+        rebuilt = b" shared name\t long  "
+        self.assert_alignment_contract(result.stdout, [rebuilt, rebuilt], [b"AC", b"AG"])
 
     def test_duplicate_sequences_remain_separate(self):
         raw = b">same\nACG\n>same\nACG\n>third\nACG\n"
@@ -427,9 +469,10 @@ class ProgramTests(unittest.TestCase):
         result = self.align_bytes(b"\n\r\n>one description\r\nac\r\n\r\ngu")
         self.assertEqual(result.stdout, b">one description\nACGU\n")
 
-    def test_final_cr_without_lf_is_a_sequence_byte(self):
+    def test_final_cr_without_lf_follows_kseq_line_trimming(self):
         result = self.align_bytes(b">one\nA\r")
-        self.assertEqual(result.stdout, b">one\nAN\n")
+        self.assertEqual(result.stdout, b">one\nA\n")
+        self.assertIn(b"replaced with N: 0", result.stderr)
 
     def test_whitespace_only_sequence_line_is_not_empty(self):
         result = self.align_bytes(b">one\n \t\n")
@@ -451,14 +494,14 @@ class ProgramTests(unittest.TestCase):
         for _ in range(3):
             self.assertEqual(self.align_bytes(raw).stdout, expected)
 
-    def test_invalid_fasta_and_input_gaps_return_3(self):
+    def test_invalid_records_and_input_gaps_return_3(self):
         cases = {
             "empty": b"", "empty-lines": b"\n\r\n",
             "empty-title": b">\nAC\n", "blank-title": b"> \t \nAC\n",
             "empty-sequence": b">one\n", "empty-first": b">one\n>two\nAC\n",
-            "before-header": b"AC\n>one\nAC\n",
-            "space-before-header": b" >one\nAC\n",
-            "fastq": b"@one\nAC\n+\nII\n",
+            "no-marker": b"ACGTUN\n",
+            "fastq-short-quality": b"@one\nAC\n+\nI\n",
+            "fastq-long-quality": b"@one\nAC\n+\nIII\n",
             "dash": b">one\nA-C\n", "dot": b">one\nAC.\n",
         }
         for label, raw in cases.items():
@@ -600,7 +643,7 @@ class ProgramTests(unittest.TestCase):
         for flag in ("-v", "--version"):
             with self.subTest(flag=flag):
                 result = self.run_tool(flag)
-                self.assertIn(b"msakit 0.1.0", result.stdout)
+                self.assertIn(b"msakit 0.2.0", result.stdout)
                 self.assertEqual(result.stderr, b"")
                 self.assert_no_artifacts()
 
