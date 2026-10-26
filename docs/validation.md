@@ -1,7 +1,7 @@
 # MSA-Kit 0.1.0 validation
 
 The implemented server working tree was built and tested on Linux. This report
-records the completed checks for the input-test expansion.
+records the completed checks for input handling and multi-sequence output validity.
 
 ## Environment
 
@@ -25,31 +25,35 @@ and license files were checked against their recorded SHA-256 values.
 | --- | ---: | --- | --- |
 | `unit.contract` | 21 | Passed | Passed |
 | `unit.reference` | 8 | Passed | Passed |
-| `integration.contract` | 54 | Passed | Passed |
+| `integration.contract` | 60 | Passed | Passed |
 | `integration.reference` | 2 | Passed | Passed |
-| Total | **85** | **4/4 CTest entries passed** | **4/4 CTest entries passed** |
+| Total | **91** | **4/4 CTest entries passed** | **4/4 CTest entries passed** |
 
-The 29 doctest cases performed **7,317 assertions** per build. The 56 Python
+The 29 doctest cases performed **7,317 assertions** per build. The 62 Python
 integration methods include additional parameterized subcases. The two doctest
 groups filter each other's cases; those filtered cases are executed in the
 other group, not omitted from the full run.
 
 The final CTest runs reported zero failures. Their elapsed suite times were
-about 2.24 seconds for Release and 15.74 seconds for the instrumented build.
+about 2.76 seconds for Release and 21.32 seconds for the instrumented build.
 These are test-suite durations, not alignment performance measurements.
 
-The pre-expansion Release baseline passed all four entries before editing.
-All 68 original test cases/methods were retained. The expansion adds seven
+The original input-test expansion retained all 68 initial test cases/methods
+and added seven
 doctest cases and ten Python methods, including a catalog-integrity check that
 does not start a subprocess. Its new input matrices execute **603 subprocess
 scenarios** per full run; these are parameterized combinations, not separate
 CTest entries. The added module cases contain 326 byte/context/boundary/read
-combinations, including all 256 byte values.
+combinations, including all 256 byte values. That expansion's final suite
+contained 85 cases/methods. The current multi-sequence extension retains them
+all and adds six Python methods, including four end-to-end methods with 127
+subprocess scenarios and two independent output-checker self-tests.
 
-A separate `ctest -L contract` run passed **2/2** entries. The complete Python
+A separate `ctest -L contract` run passed **2/2** entries during the input-test
+expansion. For the current extension, the complete Python
 contract suite was also run with the existing valid test core, which aligns by
 right-padding to the longest sequence instead of using star alignment. All
-**54 methods passed** with that core. The test-only wrapper is retained in the
+**60 methods passed** with that core. The test-only wrapper is retained in the
 ignored evidence directory; the production executable and CLI are unchanged.
 
 No Python methods were skipped in these runs. The doctest filtered-case counts
@@ -64,6 +68,42 @@ standalone executable completed successfully without changing system software.
 During that initial validation, the checked-in [tiny input](../examples/tiny.fasta) was aligned with the Release
 executable, and its named output matched
 [the expected FASTA](../examples/tiny.expected.fasta) byte for byte.
+
+## Multi-sequence datasets and observed outputs
+
+All 13 datasets below contain multiple sequences and passed the independent
+output-contract checks. The six fixed FASTA files each contain six records;
+seven generated datasets use seed 20261027. These are synthetic software-test
+datasets, not biological reference alignments. The observed alignment widths
+are not assertions for replacement cores.
+
+| Case | Sequences | Cleaned input length range | Output columns | Status |
+| --- | ---: | ---: | ---: | --- |
+| `MSA-FIXED-001` | 6 | 11–15 | 19 | Passed |
+| `MSA-FIXED-002` | 6 | 6–9 | 9 | Passed |
+| `MSA-FIXED-003` | 6 | 3–7 | 8 | Passed |
+| `MSA-FIXED-004` | 6 | 8–20 | 20 | Passed |
+| `MSA-FIXED-005` | 6 | 1–129 | 129 | Passed |
+| `MSA-FIXED-006` | 6 | 79–161 | 161 | Passed |
+| `MSA-GENERATED-001` | 2 | 16–128 | 128 | Passed |
+| `MSA-GENERATED-002` | 3 | 16–128 | 129 | Passed |
+| `MSA-GENERATED-003` | 8 | 16–128 | 138 | Passed |
+| `MSA-GENERATED-004` | 16 | 16–128 | 145 | Passed |
+| `MSA-GENERATED-005` | 64 | 16–128 | 241 | Passed |
+| `MSA-GENERATED-006` | 128 | 16–128 | 276 | Passed |
+| `MSA-GENERATED-007` | 4 | 510–513 | 513 | Passed |
+
+The matrix tests cover files, gzip, stdin, output wrapping, and reordered
+inputs. Every result preserves complete headers and cleaned sequence content
+by input position, has equal nonempty rows containing only `ACGTUN-`, and has
+no all-gap columns. The independent Python checker accepts two legal layouts
+and rejects 16 damaged outputs plus two serialization-width errors.
+
+A separate retained-output run writes each input, aligned FASTA and stderr
+under `build-msa-evidence/results/`. Its `msa-results.csv` and `msa-results.json`
+summarize sequence counts, input lengths, observed output widths and gaps.
+The largest score matrix in these datasets is 263,682 cells, approximately
+2.1 MB for scores; this is not a statement about total process memory.
 
 ## Coverage
 
@@ -106,9 +146,10 @@ The application has no public fault-injection flags. The fake cores and file
 operation substitutes are confined to separate test targets and internal test
 interfaces.
 
-No input semantics or alignment algorithm required repair during this expansion.
-Production changes add only the internal input-operation boundary with real
-system-call defaults. Test improvements also remove an over-broad CR assertion
+No input semantics or alignment algorithm required repair. The earlier input
+expansion added the internal input-operation boundary with real system-call
+defaults. The current multi-sequence extension changes only tests, fixtures,
+and documentation. Test improvements also remove an over-broad CR assertion
 that would reject otherwise valid complete headers, make fixture IDs stable,
 and include the command and captured streams in matrix-failure diagnostics.
 
@@ -135,18 +176,18 @@ To check only the algorithm-independent contract after replacing the core:
 ```
 
 For the final recorded runs, CTest also received
-`--output-junit input-test-results.xml`. This reporting option is available in the
+`--output-junit msa-test-results.xml`. This reporting option is available in the
 observed CMake version; it is not required for ordinary builds or tests. The
 server retains the generated JUnit reports at
-`build/input-test-results.xml` and `build-sanitize/input-test-results.xml`.
-The contract-only run has `build/input-contract-results.xml`. Full logs are
-preserved in `build-input-tests-evidence/release-full.log` and
-`build-input-tests-evidence/sanitize-full.log`, since subsequent filtered CTest
+`build/msa-test-results.xml` and `build-sanitize/msa-test-results.xml`.
+Full logs are preserved in `build-msa-evidence/release-full.log` and
+`build-msa-evidence/sanitize-full.log`, since subsequent filtered CTest
 runs replace a build's `Testing/Temporary/LastTest.log`.
 
-The same ignored evidence directory contains the build logs, final CTest
-summaries, `contract-only.log`, `alternate-core-contract.log`, the original
-baseline log, and `baseline.tar.gz` with the pre-expansion source/tests/docs.
+The same ignored evidence directory contains the build logs,
+`targeted-release.log`, and `alternate-core-contract.log`. The earlier
+input-test expansion's logs, original baseline and source snapshot remain in
+`build-input-tests-evidence/`.
 
 The original implementation's separate runtime-only check used:
 

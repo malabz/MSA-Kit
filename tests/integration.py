@@ -2,6 +2,7 @@
 """Small synthetic subprocess tests; no downloads or real-data experiments."""
 
 import argparse
+from dataclasses import replace
 import gzip
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ import zlib
 from input_cases import (ERROR_CASES, GENERATOR_SEED, GZIP_RAW, LIFECYCLE_ERROR_IDS,
                          VALID_CASES, generated_cases, gzip_prefix_cases,
                          invalid_gzip_cases, valid_gzip_cases)
+from msa_cases import fixed_msa_cases, generated_msa_cases
 
 
 BINARY = None
@@ -60,24 +62,32 @@ class ProgramTests(unittest.TestCase):
     def assert_no_artifacts(self, *expected_names):
         self.assertEqual({p.name for p in self.root.iterdir()}, set(expected_names))
 
-    def assert_alignment_contract(self, data, expected_headers, expected_sequences, context=""):
+    def assert_alignment_contract(self, data, expected_headers, expected_sequences, context="",
+                                  line_width=None):
         """Parse output independently and check invariants, not a gap layout."""
         self.assertTrue(data.endswith(b"\n"), context + "\nFASTA output must end with LF")
         headers = []
         rows = []
+        line_counts = []
         for line in data.split(b"\n")[:-1]:
             if line.startswith(b">"):
                 headers.append(line[1:])
                 rows.append(bytearray())
+                line_counts.append(0)
             else:
                 self.assertTrue(rows, context + "\nSequence data precedes its header")
                 self.assertTrue(line, context + "\nEmpty output sequence line")
                 self.assertNotIn(b"\r", line, context + "\nSequence lines must use LF, not CRLF")
+                if line_width is not None and line_width > 0:
+                    self.assertLessEqual(len(line), line_width, context + "\nLine exceeds requested width")
                 rows[-1].extend(line)
+                line_counts[-1] += 1
         rows = [bytes(row) for row in rows]
         self.assertEqual(headers, expected_headers, context)
         self.assertEqual(len(rows), len(expected_sequences), context)
         self.assertTrue(rows, context)
+        if line_width == 0:
+            self.assertEqual(line_counts, [1] * len(rows), context + "\nWidth zero must not wrap")
         width = len(rows[0])
         self.assertGreater(width, 0, context)
         for row, sequence in zip(rows, expected_sequences):
@@ -86,14 +96,15 @@ class ProgramTests(unittest.TestCase):
             self.assertEqual(row.replace(b"-", b""), sequence, context)
         for column in zip(*rows):
             self.assertTrue(any(base != ord("-") for base in column), context + "\nAll-gap column")
+        return rows
 
     def exercise_input_case(self, case, input_mode, output_mode="stdout", *,
-                            wire=None, existing=False):
+                            wire=None, existing=False, line_width=None):
         """Run a named case in an isolated directory and check its whole outcome."""
         if wire is None:
             wire = gzip.compress(case.raw, mtime=0) if input_mode.startswith("gzip") else case.raw
         context = (f"case={case.case_id} input={input_mode} output={output_mode} "
-                   f"existing={existing} seed={case.seed}\nraw={case.raw!r}")
+                   f"existing={existing} seed={case.seed} line_width={line_width}\nraw={case.raw!r}")
         with tempfile.TemporaryDirectory(prefix=case.case_id + "-", dir=self.root) as folder:
             work = Path(folder)
             source = "-"
@@ -114,6 +125,8 @@ class ProgramTests(unittest.TestCase):
                     destination.write_bytes(sentinel)
                     original_files.add(destination.name)
             args = ["-i", source, "-o", destination]
+            if line_width is not None:
+                args.extend(("--line-width", str(line_width)))
             if existing:
                 args.append("--force")
             result = self.run_tool(*args, data=wire if source == "-" else None,
@@ -154,7 +167,8 @@ class ProgramTests(unittest.TestCase):
                     except (OSError, EOFError, zlib.error) as error:
                         self.fail(f"{context}\nCannot decode gzip output: {error}")
                 original_files.add(destination.name)
-            self.assert_alignment_contract(aligned, list(case.headers), list(case.sequences), context)
+            self.assert_alignment_contract(aligned, list(case.headers), list(case.sequences), context,
+                                           line_width=80 if line_width is None else line_width)
             counters = re.search(
                 rb"Read (\d+) sequences; lowercase conversions: (\d+); replaced with N: (\d+)(?:\r?\n|$)",
                 result.stderr)
@@ -164,14 +178,107 @@ class ProgramTests(unittest.TestCase):
             self.assertEqual({path.name for path in work.iterdir()}, original_files, context)
 
     def test_input_catalog_identifiers_and_lifecycle_selection(self):
+        msa_cases = (*fixed_msa_cases(), *generated_msa_cases())
         all_cases = (*VALID_CASES, *ERROR_CASES, *valid_gzip_cases(), *invalid_gzip_cases(),
-                     *gzip_prefix_cases(), *(case for case, _ in generated_cases()))
+                     *gzip_prefix_cases(), *(case for case, _ in generated_cases()), *msa_cases)
         identifiers = [case.case_id for case in all_cases]
         self.assertEqual(len(identifiers), len(set(identifiers)), "Duplicate input case ID")
         self.assertTrue(LIFECYCLE_ERROR_IDS.issubset({case.case_id for case in ERROR_CASES}),
                         "Unknown case in lifecycle selection")
         for identifier in identifiers:
             self.assertRegex(identifier, r"^[A-Z]+(?:-[A-Z]+)*-\d{3}$")
+        for case in msa_cases:
+            with self.subTest(case=case.case_id):
+                self.assertGreaterEqual(len(case.sequences), 2, "MSA cases must contain multiple records")
+                self.assertEqual(len(case.headers), len(case.sequences))
+                self.assertGreater(len(set(case.sequences)), 1, "Include distinct rows to test correspondence")
+
+    def test_multisequence_fasta_files_all_transports(self):
+        # Six actual FASTA fixtures, each with six records, through 12 routes.
+        for case in fixed_msa_cases():
+            for input_mode in INPUT_MODES:
+                for output_mode in OUTPUT_MODES:
+                    with self.subTest(case=case.case_id, input=input_mode, output=output_mode):
+                        self.exercise_input_case(case, input_mode, output_mode)
+
+    def test_multisequence_generated_counts_and_lengths(self):
+        for index, case in enumerate(generated_msa_cases()):
+            for channel, input_mode in enumerate(INPUT_MODES):
+                output_mode = OUTPUT_MODES[(index + channel) % len(OUTPUT_MODES)]
+                with self.subTest(case=case.case_id, seed=case.seed, records=len(case.sequences),
+                                  input=input_mode, output=output_mode):
+                    self.exercise_input_case(case, input_mode, output_mode)
+
+    def test_multisequence_reordering_preserves_new_record_positions(self):
+        for case in fixed_msa_cases():
+            count = len(case.sequences)
+            orders = (("reversed", tuple(reversed(range(count)))),
+                      ("rotated", tuple(range(1, count)) + (0,)))
+            for name, order in orders:
+                headers = tuple(case.headers[index] for index in order)
+                sequences = tuple(case.sequences[index] for index in order)
+                raw = b"".join(b">" + header + b"\n" + sequence + b"\n"
+                               for header, sequence in zip(headers, sequences))
+                reordered = replace(case, raw=raw, headers=headers, sequences=sequences,
+                                    uppercase=0, unknown=0)
+                with self.subTest(case=case.case_id, order=name):
+                    # Changing the first row may change the reference center.
+                    # Only the new input correspondence is constrained here.
+                    self.exercise_input_case(reordered, "gzip-stdin", "stdout")
+
+    def test_multisequence_output_wrapping(self):
+        case = next(case for case in fixed_msa_cases() if case.case_id == "MSA-FIXED-006")
+        for width in (0, 1, 7, 80, 81):
+            for output_mode in OUTPUT_MODES:
+                with self.subTest(case=case.case_id, width=width, output=output_mode):
+                    self.exercise_input_case(case, "gzip-stdin", output_mode, line_width=width)
+
+    def test_independent_msa_checker_accepts_distinct_legal_layouts(self):
+        headers = [b"same", b"same", b"third"]
+        sequences = [b"AC", b"ATC", b"GC"]
+        for rows in ((b"A-C", b"ATC", b"G-C"), (b"AC-", b"ATC", b"GC-")):
+            with self.subTest(rows=rows):
+                data = b"".join(b">" + header + b"\n" + row + b"\n"
+                                for header, row in zip(headers, rows))
+                self.assert_alignment_contract(data, headers, sequences, line_width=0)
+
+    def test_independent_msa_checker_rejects_malformed_results(self):
+        headers = [b"same", b"same", b"third"]
+        sequences = [b"AC", b"ATC", b"GC"]
+        rows = [b"A-C", b"ATC", b"G-C"]
+
+        def fasta(names, aligned):
+            return b"".join(b">" + name + b"\n" + row + b"\n"
+                            for name, row in zip(names, aligned))
+
+        good = fasta(headers, rows)
+        damaged = {
+            "missing-row": fasta(headers[:2], rows[:2]),
+            "extra-row": good + b">extra\nA-C\n",
+            "reordered-duplicate-header-rows": fasta(headers, [rows[1], rows[0], rows[2]]),
+            "renamed-header": fasta([b"changed", *headers[1:]], rows),
+            "unaligned-unequal-input": fasta(headers, sequences),
+            "altered-residue": fasta(headers, [b"A-T", *rows[1:]]),
+            "lost-residue": fasta(headers, [b"A--", *rows[1:]]),
+            "extra-residue": fasta(headers, [b"ACC", *rows[1:]]),
+            "dot-gap": fasta(headers, [b"A.C", *rows[1:]]),
+            "lowercase": fasta(headers, [b"a-C", *rows[1:]]),
+            "all-gap-column": fasta(headers, [b"-" + row for row in rows]),
+            "empty-row": fasta(headers, [b"", *rows[1:]]),
+            "missing-final-LF": good[:-1],
+            "CRLF-sequence": good.replace(b"A-C\n", b"A-C\r\n", 1),
+            "data-before-header": b"AC\n" + good,
+            "empty-output": b"",
+        }
+        for name, data in damaged.items():
+            with self.subTest(damage=name):
+                with self.assertRaises(AssertionError):
+                    self.assert_alignment_contract(data, headers, sequences)
+        with self.assertRaises(AssertionError):
+            self.assert_alignment_contract(good, headers, sequences, line_width=2)
+        wrapped = good.replace(b"A-C\n", b"A-\nC\n", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_alignment_contract(wrapped, headers, sequences, line_width=0)
 
     def test_named_valid_input_transport_matrix(self):
         # 12 named cases x 4 input paths x 3 output paths.

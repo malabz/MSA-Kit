@@ -11,6 +11,8 @@ small sequences. The authoritative behavior remains the
 - [The input-case catalog](../tests/input_cases.py) contains named inputs and
   expected records, cleaning counts, or error locations. Expected values do not
   come from running the production parser.
+- [The multi-sequence catalog](../tests/msa_cases.py) adds six checked-in FASTA
+  files and seven bounded generated datasets, all with at least two records.
 - [The integration runner](../tests/integration.py) launches the real program,
   feeds files or pipes, independently parses output, and checks file lifetimes.
 - [The I/O module tests](../tests/test_io.cpp) cover all byte values, exact
@@ -57,6 +59,54 @@ of a small gzip member. Together with the 32 generated groups and path/header
 checks, the expansion adds 603 subprocess scenarios. These are parameterized
 scenarios inside test methods, not 603 new CTest entries. A separate catalog
 integrity test checks identifier uniqueness and lifecycle-case references.
+
+## Multi-sequence result checks
+
+[The fixed FASTA files](../tests/data/msa/README.md) each contain six synthetic
+sequences. Their prepared records are explicitly declared in the multi-sequence
+catalog, independently of the program's parser and returned alignment.
+
+| Stable case | Dataset or behavior |
+| --- | --- |
+| `MSA-FIXED-001` | DNA prefix/internal/suffix insertions, deletion and substitution |
+| `MSA-FIXED-002` | RNA and mixed T/U, insertion, deletion and N |
+| `MSA-FIXED-003` | Duplicate full headers and sequences, casing and unknown-character cleaning |
+| `MSA-FIXED-004` | Divergent sequences and an N-rich center |
+| `MSA-FIXED-005` | Input lengths 129, 1, 2, 9, 31 and 64 |
+| `MSA-FIXED-006` | Input lengths 79, 80, 81, 159, 160 and 161 |
+| `MSA-GENERATED-001` through `006` | Respectively 2, 3, 8, 16, 64 and 128 records; lengths 16–128 |
+| `MSA-GENERATED-007` | Four related sequences of lengths 512, 513, 510 and 512 |
+
+The generated MSA datasets use seed **20261027**, separate from the smaller
+input-representation generator. All fixtures are synthetic; they are not
+biological benchmarks or reference alignments.
+
+Four new end-to-end methods add **127 subprocess scenarios**: 72 fixed-file
+transport combinations, 28 generated-data combinations, 12 reversed/rotated
+input orders, and 15 output-width combinations. The width checks cover 0, 1, 7,
+80 and 81 through stdout and both named-output formats. Positive widths limit
+each sequence line; width zero requires one unwrapped line per sequence.
+
+Every result is parsed independently and must preserve complete headers, input
+positions, record count and cleaned residues, with equal nonzero row widths,
+only `ACGTUN-`, and no all-gap column. Reordering inputs is checked against the
+new order; the resulting gap layout may change with the selected center.
+
+Two further methods test this independent checker itself: it must accept two
+distinct valid layouts and reject 16 malformed outputs plus two width errors.
+These include unaligned unequal-length rows, missing/extra/reordered rows,
+changed headers, altered/lost/added residues, illegal characters, all-gap
+columns and malformed serialization. They do not call the production validator.
+
+With the supplied reference core, every MSA dataset invokes pairwise alignment.
+The largest pairwise score matrix in this set is 513 by 514 cells (2,109,456
+bytes of scores); each table is released before the next query. These bounded
+checks exercise actual alignment without a large-data benchmark. The existing
+250,000-character single-sequence stream test remains a separate I/O check.
+
+The [validation record](validation.md) lists observed output widths and the
+location of retained input/output files for each dataset. Output widths are
+observations of the reference core, not golden layouts imposed on other cores.
 
 ## Transport and output checks
 
