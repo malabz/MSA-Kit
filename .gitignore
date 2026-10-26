@@ -1,0 +1,19 @@
+# Operating-system files
+.DS_Store
+Thumbs.db
+
+# Local editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# Generated build output
+/build/
+/dist/
