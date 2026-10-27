@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.18)
-project(MSAKit VERSION 0.2.0 LANGUAGES CXX)
+project(MSAKit VERSION 0.3.0 LANGUAGES CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(FATAL_ERROR "MSA-Kit 0.2 supports Linux (POSIX I/O and atomic file publication).")
+    message(FATAL_ERROR "MSA-Kit 0.3 supports Linux (POSIX I/O and atomic file publication).")
 endif()
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

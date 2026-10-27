@@ -37,6 +37,42 @@ alternative-core tests link this same library as the executable. Replacing
 test program. The functional split preserves all existing test cases and
 expected answers; no tests merely mirror the number or names of source files.
 
+## C++17 build compatibility
+
+Version 0.3.0 uses C++17 for production code and C++ tests, with compiler
+extensions disabled. The core, injected test cores, validation, and output
+interfaces accept `const std::vector<SequenceRecord>&`; the caller retains
+ownership and no input records are copied by the call. Derived projects using
+the old span interface should follow the [migration steps](design.md#migrating-from-020)
+and rebuild all targets together.
+
+The acceptance matrix is:
+
+| Configuration | Checks |
+| --- | --- |
+| GCC 13.1, Release | Full build and all four CTest entries |
+| GCC 13.1, Debug with ASan/UBSan | Full build and all four CTest entries under instrumentation |
+| GCC 9.5, Release | Full build and the same tests with the older toolchain |
+| Contract group and alternative core | Algorithm-independent checks and the common integration runner with a substituted core |
+| `BUILD_TESTING=OFF` | Build, installation, version output, FASTA example, and FASTQ through stdin |
+
+Use separate build directories when changing compilers. Select the intended
+compiler at initial configuration with `-DCMAKE_CXX_COMPILER=/path/to/g++`.
+Configure with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and inspect
+`compile_commands.json` to confirm that production and test compilations use
+`-std=c++17`, without GNU language extensions. Release and sanitizer command
+templates are in the [design document](design.md#9-verification-plan).
+
+This migration preserves existing behavioral expectations and the 13
+multi-sequence datasets. Acceptance includes the complete byte-cleaning
+checks, short output names and case-sensitive `.gz` selection, temporary-file
+cleanup, input ordering, and read-only core inputs. Only language syntax,
+function signatures, and version-string expectations change. Record actual
+commands, compiler versions, passes, failures, and skips in the
+[validation report](validation.md); the matrix above describes required checks,
+not their execution status. Choosing C++17 does not by itself establish support
+for every older compiler.
+
 ## Input matrix
 
 The stable identifiers below appear in assertions or Python subtest contexts.
@@ -85,10 +121,11 @@ entries. A catalog integrity test checks identifier uniqueness and
 lifecycle-case references. The 32 small generated groups, 13 multi-sequence
 datasets and existing CLI/file/error tests remain additional coverage.
 
-## Compatibility cases for 0.2.0
+## Input compatibility cases introduced in 0.2.0
 
-The new expectations describe the pinned HAlign-5 kseq implementation. They
-are explicit fixtures, not results obtained by calling the production reader.
+These expectations describe the pinned HAlign-5 kseq implementation introduced
+in 0.2.0 and retained in 0.3.0. They are explicit fixtures, not results obtained
+by calling the production reader.
 
 - Old rejection IDs `INPUT-ERROR-010` through `013` are retired. The same bytes
   now succeed as `KSEQ-COMPAT-001` through `004`: preceding sequence-like text,

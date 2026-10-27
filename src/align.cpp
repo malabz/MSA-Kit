@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace msakit {
 namespace {
@@ -104,7 +105,7 @@ Projection align_pair(std::string_view center, std::string_view query) {
 // Reference star alignment — replaceable core
 // Replace this implementation to use another algorithm. Keep input unchanged,
 // preserve row-to-input correspondence, and return only aligned strings.
-Alignment align(std::span<const SequenceRecord> input) {
+Alignment align(const std::vector<SequenceRecord>& input) {
     if (input.empty()) {
         throw detail::Error(detail::kCoreError, "the alignment core requires at least one record");
     }

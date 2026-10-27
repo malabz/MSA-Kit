@@ -1,8 +1,8 @@
 # MSA-Kit 中文开发指南
 
-MSA-Kit 0.2.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，`src` 按功能组织为七个文件，派生开发者主要编辑 `src/align.cpp`。
+MSA-Kit 0.3.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，`src` 按功能组织为七个文件，派生开发者主要编辑 `src/align.cpp`。
 
-仓库已包含 C++20 实现、参考星比对、小型示例和测试。实际执行的构建与测试结果见 [验证记录](validation.md)。
+仓库已包含 C++17 实现、参考星比对、小型示例和测试。实际执行的构建与测试结果见 [验证记录](validation.md)。
 
 完整接口定义见 [英文设计文档](design.md)，项目概览见 [README](../README.md)。本指南解释如何理解框架和替换核心，不另行定义一套规则。
 
@@ -59,7 +59,7 @@ extern/kseq/kseq.h        # 固定来源并带安全补丁的读取依赖
 | 所有核心都必须满足的结果规则 | [validation.cpp](../src/validation.cpp) |
 | 比对算法 | [align.cpp](../src/align.cpp) |
 
-这次拆分只调整源码组织，版本保持 0.2.0，输入行为、算法、命令行参数和退出码均沿用既有约定。
+0.3.0 保留上述七文件结构，将最低语言标准改为 C++17，并将核心参数改为只读 `vector` 引用。输入行为、算法、命令行参数和退出码均沿用 0.2.0 的约定。
 
 ## 2. 核心接收和返回什么
 
@@ -77,18 +77,24 @@ struct Alignment {
     std::vector<std::string> rows;
 };
 
-Alignment align(std::span<const SequenceRecord> input);
+Alignment align(const std::vector<SequenceRecord>& input);
 
 }
 ```
 
-`header` 由 kseq 的 `name` 和 `comment` 重建：保留 `name`，追加非空 `comment`，两者均非空时在中间加一个空格。例如 `>sample\tinfo` 得到 `sample info`。描述内容保留，但不再保证原始标题分隔空白逐字节不变。输入集合至少包含一条记录；每条 `sequence` 已完成清洗，非空且没有 gap。`std::span<const SequenceRecord>` 表示核心可以读取这些记录，但不能修改它们。
+`header` 由 kseq 的 `name` 和 `comment` 重建：保留 `name`，追加非空 `comment`，两者均非空时在中间加一个空格。例如 `>sample\tinfo` 得到 `sample info`。描述内容保留，但不再保证原始标题分隔空白逐字节不变。输入集合至少包含一条记录；每条 `sequence` 已完成清洗，非空且没有 gap。`const std::vector<SequenceRecord>&` 表示通过只读引用接收整个输入集合，调用时不复制容器或记录。数据由框架持有，在调用期间有效；核心不能修改记录，也不能在返回后继续持有其引用。
 
 返回值中的 `rows[i]` 对应 `input[i]`。例如第 3 条输入必须仍然对应第 3 条输出；核心内部即使排序或分组，也必须恢复这个对应关系。
 
 记录位置是内部身份，标题可以重复。不要用标题作为唯一键，否则同名记录可能被覆盖。输出层使用重建后保存的标题，因此核心只需返回对齐后的序列字符串。
 
 核心不能自行解析参数、读写文件或输出 FASTA。失败时抛出异常，由统一入口记录错误并返回退出码；不要返回不完整的结果作为成功输出。
+
+### 已基于 0.2.0 开发的项目如何迁移
+
+将自定义核心的声明和定义都改为上面的 `const std::vector<SequenceRecord>&` 签名。自定义核心回调或辅助函数若使用旧的 `std::span` 参数，也要同步调整，移除不再使用的 `<span>` 头文件，并改写依赖 span 的操作。框架内部的核心函数指针、验证及输出接口也采用相同的只读引用。已有 `align(records)` 调用在传入框架的输入 vector 时无需增加转换。
+
+在新的构建目录中重新编译框架、自定义核心及测试，再运行 `contract` 组。不要混用旧接口编译的对象文件。`SequenceRecord` 与 `Alignment` 的字段、输入位置对应关系和结果约定保持不变；CLI 用法及数据处理行为也保持不变，`--version` 更新为 `0.3.0`。编译器验收范围见 [测试说明](testing.md#c17-build-compatibility)，具体执行结果见 [验证记录](validation.md)。
 
 ## 3. 进入核心前，序列会怎样变化
 
@@ -107,7 +113,7 @@ kseq 负责记录与行的解析，保留下来的空格、制表符等字节会
 
 输入支持 FASTA、FASTQ 及固定版本 kseq 能识别的混合记录。FASTQ 可以有多行序列和质量值；质量长度须与序列长度一致，质量值解析后丢弃，不传入核心，也不写入结果。输出始终为 aligned FASTA。重复标题、重复序列与输入顺序继续保留。URL 下载、蛋白质及已对齐 profile 不在支持范围内。
 
-0.2.0 相比 0.1.0 的输入行为变化包括：
+以下输入行为由 0.2.0 相比 0.1.0 引入，0.3.0 继续沿用：
 
 | 场景 | 本版行为 |
 |---|---|
@@ -132,7 +138,7 @@ T 与 U 始终保留各自字符。参考核心仅在评分时把它们视为同
 
 ## 4. 构建与使用
 
-本版支持 Linux，需要 C++20 编译器、CMake ≥ 3.18 和系统 zlib 开发文件。CLI11、spdlog、doctest 和 kseq 已随仓库固定来源附带，正常配置和构建不会下载依赖。启用测试时还需要 Python ≥ 3.8；运行 `msakit` 不依赖 Python。依赖版本、来源和许可见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
+本版支持 Linux，需要 C++17 编译器、CMake ≥ 3.18 和系统 zlib 开发文件。CLI11、spdlog、doctest 和 kseq 已随仓库固定来源附带，正常配置和构建不会下载依赖。启用测试时还需要 Python ≥ 3.8；运行 `msakit` 不依赖 Python。依赖版本、来源和许可见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
 
 在仓库根目录构建并运行测试：
 
@@ -283,7 +289,7 @@ cmake --build build-sanitize --parallel 2
 
 设计固定参考 [HAlign-5 提交 b0d5608](https://github.com/pinglu-zhang/HAlign-5/tree/b0d5608811d44e30bc323da54f0583ceaaf684d2)，完整提交号为 `b0d5608811d44e30bc323da54f0583ceaaf684d2`。
 
-MSA-Kit 沿用其 C++20、CMake、CLI11、字符查表清洗及缓冲读写思路，并采用相同的 kseq 记录读取与 `name/comment` 标题重建方式。固定版本的 `kseq.h` 保留原 MIT 声明，并记录原始校验值及本地安全补丁。输入 gap 拒绝、位置身份、严格 gzip 校验、标准错误日志和输出完成检查属于 MSA-Kit 明确规定的行为；具体来源和改写范围见 [英文设计文档](design.md)。
+MSA-Kit 沿用其 CMake、CLI11、字符查表清洗及缓冲读写思路，并采用相同的 kseq 记录读取与 `name/comment` 标题重建方式。本项目从 0.3.0 起使用 C++17。固定版本的 `kseq.h` 保留原 MIT 声明，并记录原始校验值及本地安全补丁。输入 gap 拒绝、位置身份、严格 gzip 校验、标准错误日志和输出完成检查属于 MSA-Kit 明确规定的行为；具体来源和改写范围见 [英文设计文档](design.md)。
 
 HAlign-5 的 WFA2、KSW2、MinHash、外部 MSA 命令和参考 profile 流程没有进入首版基础模板。HAlign-5 及依赖的版本、来源和许可说明见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
 

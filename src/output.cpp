@@ -10,7 +10,6 @@
 #include <cstring>
 #include <filesystem>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -20,6 +19,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <zlib.h>
+#include <vector>
 
 namespace msakit::detail {
 namespace {
@@ -158,7 +158,7 @@ private:
     bool initialized_ = false;
 };
 
-void serialize(OutputStream& stream, std::span<const SequenceRecord> input,
+void serialize(OutputStream& stream, const std::vector<SequenceRecord>& input,
                const Alignment& alignment, std::size_t width) {
     for (std::size_t i = 0; i < input.size(); ++i) {
         stream.append(">");
@@ -247,7 +247,7 @@ int FileOperations::publish(const std::filesystem::path& temporary,
 }
 
 void write_output_with_operations(const Options& options,
-                                  std::span<const SequenceRecord> input,
+                                  const std::vector<SequenceRecord>& input,
                                   const Alignment& alignment,
                                   const std::optional<FileIdentity>& input_identity,
                                   FileOperations& operations) {
@@ -260,7 +260,8 @@ void write_output_with_operations(const Options& options,
         serialize(stream, input, alignment, options.line_width);
     } else {
         OutputTransaction transaction(options.output, options.force, operations);
-        const bool gzip = options.output.ends_with(".gz");
+        const bool gzip = options.output.size() >= 3 &&
+                          options.output.compare(options.output.size() - 3, 3, ".gz") == 0;
         {
             OutputStream stream(transaction.fd(), gzip, options.output, operations);
             serialize(stream, input, alignment, options.line_width);
@@ -269,7 +270,7 @@ void write_output_with_operations(const Options& options,
     }
 }
 
-void write_output(const Options& options, std::span<const SequenceRecord> input,
+void write_output(const Options& options, const std::vector<SequenceRecord>& input,
                   const Alignment& alignment,
                   const std::optional<FileIdentity>& input_identity) {
     FileOperations operations;

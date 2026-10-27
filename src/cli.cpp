@@ -17,7 +17,7 @@
 #include <spdlog/sinks/stdout_sinks.h>
 
 #ifndef MSAKIT_VERSION
-#define MSAKIT_VERSION "0.2.0"
+#define MSAKIT_VERSION "0.3.0"
 #endif
 
 namespace msakit::detail {

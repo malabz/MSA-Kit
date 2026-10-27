@@ -83,7 +83,7 @@ void error_code(const std::function<void()>& action, int expected) {
 
 void no_temporary_files(const TempDirectory& temporary) {
     for (const auto& file : fs::directory_iterator(temporary.path)) {
-        CHECK_FALSE(file.path().filename().string().starts_with(".msakit-"));
+        CHECK_FALSE(file.path().filename().string().compare(0, 8, ".msakit-") == 0);
     }
 }
 
@@ -410,7 +410,7 @@ TEST_CASE("A reused temporary pathname is not deleted after successful publicati
     CHECK(get(options.output) == ">s\nACGT\n");
     std::size_t preserved = 0;
     for (const auto& file : fs::directory_iterator(temporary.path)) {
-        if (file.path().filename().string().starts_with(".msakit-")) {
+        if (file.path().filename().string().compare(0, 8, ".msakit-") == 0) {
             ++preserved;
             CHECK(get(file.path()) == "unrelated");
         }

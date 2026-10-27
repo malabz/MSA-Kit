@@ -1,12 +1,12 @@
 #include "internal.hpp"
 
 #include <cstddef>
-#include <span>
 #include <string>
+#include <vector>
 
 namespace msakit::detail {
 
-void validate_alignment(std::span<const SequenceRecord> input,
+void validate_alignment(const std::vector<SequenceRecord>& input,
                         const Alignment& alignment) {
     if (input.empty() || alignment.rows.size() != input.size()) {
         throw Error(kCoreError, "alignment row count does not match nonempty input");

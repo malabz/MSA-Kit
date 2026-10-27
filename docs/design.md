@@ -1,6 +1,6 @@
 # MSA-Kit design
 
-This document defines MSA-Kit version 0.2.0. See the
+This document defines MSA-Kit version 0.3.0. See the
 [project overview](../README.md) and [Chinese developer guide](guide.zh-CN.md).
 Requirements here describe the implemented public contract. Build instructions
 are below; measured validation results are recorded in the
@@ -17,7 +17,7 @@ It separates ordinary application behavior from a replaceable alignment core.
 The first core is a small, deterministic star aligner intended for learning,
 interface verification, and replacement by another algorithm.
 
-The first implementation targets Linux, C++20, and CMake 3.18 or later. Its
+The implementation targets Linux, C++17, and CMake 3.18 or later. Its
 supported input is unaligned FASTA or FASTQ, either plain or gzip-compressed, from a file
 or standard input. Its output is aligned FASTA, optionally gzip-compressed when
 written to a file. Sequences are held in memory during alignment.
@@ -69,8 +69,9 @@ modules separately. The production executable and test drivers link this same
 library. kseq is instantiated only in the input implementation; zlib-specific
 helpers stay in the input/output implementations. Shared error helpers use only
 the standard library. Each implementation includes its own dependencies.
-This organization changes neither the public interface nor version 0.2.0's
-record, CLI, output, or error semantics.
+Version 0.3.0 retains this seven-file organization and version 0.2.0's
+record, CLI, output, and error semantics. Its core parameter changes to a
+read-only vector reference to support C++17, as described below.
 
 The application validates input before calling the core and validates the
 complete returned alignment before opening a final output transaction. It keeps
@@ -82,7 +83,6 @@ No raw-input copy or HAlign-style working-directory tree is required.
 The public header exposes the following interface:
 
 ```cpp
-#include <span>
 #include <string>
 #include <vector>
 
@@ -97,7 +97,7 @@ struct Alignment {
     std::vector<std::string> rows;
 };
 
-Alignment align(std::span<const SequenceRecord> input);
+Alignment align(const std::vector<SequenceRecord>& input);
 
 }  // namespace msakit
 ```
@@ -109,8 +109,10 @@ duplicate headers and duplicate sequences must remain separate records.
 `sequence` contains the cleaned, nonempty sequence, with no gaps. The input
 collection must contain at least one record.
 
-The span is a read-only view valid for the duration of the call. The core must
-not modify input records, retain views into them after returning, parse command
+The vector is passed by const reference, without copying the collection or its
+records. The framework owns the input and keeps it valid for the duration of
+the call. The core must not modify input records, retain references into them
+after returning, parse command
 arguments, read or write files, or write to standard output. Returned strings
 own their storage. `rows[i]` corresponds to `input[i]`; the core cannot add,
 remove, or reorder records. It returns only aligned strings, leaving all header
@@ -130,6 +132,22 @@ Before output, the framework checks all of these properties:
 
 These checks define valid output, not its biological accuracy. An alternative
 algorithm may choose a different valid alignment from the reference core.
+
+### Migrating from 0.2.0
+
+The 0.3.0 interface replaces the old `std::span<const SequenceRecord>` parameter
+with `const std::vector<SequenceRecord>&`. Derived projects must update their
+core declaration, definition, and custom callbacks to match, remove unused
+`<span>` includes, and adapt any span-specific operations. The framework's
+internal core-function pointer, validation, and output declarations use the
+same const vector reference. Ordinary calls passing the input vector remain
+`align(records)`; no copy or wrapper is needed.
+
+Rebuild the framework, custom core, and tests together in a fresh build
+directory and run the contract group. The fields in `SequenceRecord` and
+`Alignment`, record ordering, reference-algorithm rules, and runtime data
+contracts do not change. CLI options and exit codes remain the same;
+`--version` reports `0.3.0`.
 
 ## 4. Input contract
 
@@ -157,8 +175,9 @@ positions. Original header separator bytes are not preserved exactly.
 
 ### Pinned kseq parsing behavior and 0.1.0 compatibility
 
-Version 0.2.0 replaces the strict FASTA parser from 0.1.0. Record semantics are
-defined by the pinned kseq implementation, including these explicit examples:
+Version 0.2.0 replaced the strict FASTA parser from 0.1.0; version 0.3.0 retains
+that change. Record semantics are defined by the pinned kseq implementation,
+including these explicit examples:
 
 | Input context | Parsed behavior before cleaning |
 |---|---|
@@ -481,6 +500,15 @@ does not require Python at runtime. The `msakit_support` target contains the
 shared CLI, I/O, and validation layers; `msakit_core` contains the replaceable
 reference implementation; `msakit` links both.
 
+Production and C++ test targets use C++17 with compiler extensions disabled.
+The compatibility acceptance matrix includes GCC 13.1 Release, GCC 13.1 Debug
+with ASan/UBSan, and GCC 9.5 Release. Each uses a separate build directory and
+the same behavioral assertions. Actual compiler commands and results belong
+in the [validation report](validation.md); choosing C++17 alone does not
+establish support for every older compiler. See the
+[testing guide](testing.md#c17-build-compatibility) for the remaining build and
+installation checks.
+
 File-operation fault injection is confined to internal interfaces and test
 executables. It covers short/interrupted reads and writes, read/close failures,
 gzip finalization, publication, and allocation errors without adding public
@@ -505,7 +533,7 @@ modified checksums are recorded separately in the dependency manifest.
 
 | HAlign-5 source | MSA-Kit treatment |
 |---|---|
-| [CMakeLists.txt](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/CMakeLists.txt) | Retain C++20/CMake organization; make the dependency set small and zlib required; use a common CTest integration |
+| [CMakeLists.txt](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/CMakeLists.txt) | Retain CMake organization while using C++17 in MSA-Kit; make the dependency set small and zlib required; use a common CTest integration |
 | [include/config.hpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/config.hpp) | Adapt CLI11 registration and logging organization; keep only the documented general options and send logs to stderr |
 | [include/utils.h](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/include/utils.h) | Adapt byte-table cleaning; reject pre-existing gaps; keep rebuilt headers and positional identity instead of header-keyed maps |
 | [src/utils/seq_io.cpp](https://github.com/pinglu-zhang/HAlign-5/blob/b0d5608811d44e30bc323da54f0583ceaaf684d2/src/utils/seq_io.cpp) | Use the same kseq lifecycle and name/comment header reconstruction; feed a stricter gzip decoder through a callback and retain MSA-Kit's completed-write checks |

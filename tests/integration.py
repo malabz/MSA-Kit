@@ -643,7 +643,7 @@ class ProgramTests(unittest.TestCase):
         for flag in ("-v", "--version"):
             with self.subTest(flag=flag):
                 result = self.run_tool(flag)
-                self.assertIn(b"msakit 0.2.0", result.stdout)
+                self.assertIn(b"msakit 0.3.0", result.stdout)
                 self.assertEqual(result.stderr, b"")
                 self.assert_no_artifacts()
 

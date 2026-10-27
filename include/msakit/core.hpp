@@ -1,6 +1,5 @@
 #pragma once
 
-#include <span>
 #include <string>
 #include <vector>
 
@@ -18,6 +17,6 @@ struct Alignment {
 
 // Replace the implementation in src/align.cpp, preserving this contract.
 // Input is nonempty, cleaned, gap-free and read-only. rows[i] belongs to input[i].
-Alignment align(std::span<const SequenceRecord> input);
+Alignment align(const std::vector<SequenceRecord>& input);
 
 }  // namespace msakit

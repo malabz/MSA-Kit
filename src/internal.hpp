@@ -8,7 +8,6 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -77,7 +76,7 @@ struct Options {
     bool quiet = false;
 };
 
-using CoreFunction = Alignment (*)(std::span<const SequenceRecord>);
+using CoreFunction = Alignment (*)(const std::vector<SequenceRecord>&);
 
 // The function parameter permits separate test executables to exercise errors
 // from an alternate core without adding production CLI switches or backdoors.
@@ -119,7 +118,7 @@ InputData read_input_with_operations(const std::string& path,
 void check_output_path(const Options& options,
                        const std::optional<FileIdentity>& input_identity);
 void write_output(const Options& options,
-                  std::span<const SequenceRecord> input,
+                  const std::vector<SequenceRecord>& input,
                   const Alignment& alignment,
                   const std::optional<FileIdentity>& input_identity);
 
@@ -138,13 +137,13 @@ public:
 };
 
 void write_output_with_operations(
-    const Options& options, std::span<const SequenceRecord> input,
+    const Options& options, const std::vector<SequenceRecord>& input,
     const Alignment& alignment,
     const std::optional<FileIdentity>& input_identity,
     FileOperations& operations);
 
 // Algorithm-independent result validation.
-void validate_alignment(std::span<const SequenceRecord> input,
+void validate_alignment(const std::vector<SequenceRecord>& input,
                         const Alignment& alignment);
 
 }  // namespace msakit::detail

@@ -6,11 +6,12 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 std::string mode;
 
-msakit::Alignment fake_core(std::span<const msakit::SequenceRecord> input) {
+msakit::Alignment fake_core(const std::vector<msakit::SequenceRecord>& input) {
     if (mode == "throw") throw std::runtime_error("test core exception");
     if (mode == "badalloc") throw std::bad_alloc{};
     if (mode == "typed-error") throw msakit::detail::Error(4, "test core I/O-shaped exception");

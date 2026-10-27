@@ -10,7 +10,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,6 +18,7 @@
 #include <unistd.h>
 #include <zlib.h>
 #include <kseq.h>
+#include <vector>
 
 namespace msakit::detail {
 namespace {
@@ -50,7 +50,7 @@ void increment(std::size_t& value) {
 // the repository's third-party notices. Gaps are rejected before this table.
 constexpr auto make_clean_table() {
     std::array<unsigned char, 256> table{};
-    table.fill('N');
+    for (auto& value : table) value = 'N';
     constexpr std::string_view upper = "ACGTUN";
     constexpr std::string_view lower = "acgtun";
     for (std::size_t i = 0; i < upper.size(); ++i) {

@@ -4,7 +4,7 @@ A reusable template for building multiple sequence alignment tools with consiste
 
 MSA-Kit is designed so that developers can copy the project, replace its alignment core, and reuse the surrounding sequence readers, writers, command-line interface, and result checks.
 
-**Version 0.2.0.** Sequence records are parsed with the pinned HAlign-5 `kseq.h`. Seven source-directory files separate the command line, input, output, validation and algorithm, with one shared internal header. Developers primarily replace `src/align.cpp`. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
+**Version 0.3.0.** MSA-Kit uses C++17 and passes prepared records to the core by a read-only vector reference. Sequence records are parsed with the pinned HAlign-5 `kseq.h`. Seven source-directory files separate the command line, input, output, validation and algorithm, with one shared internal header. Developers primarily replace `src/align.cpp`. The reference algorithm is deliberately small and readable, intended for learning and replacement rather than large-scale production alignment. Build and test instructions are below.
 
 ## Documentation
 
@@ -25,7 +25,7 @@ MSA-Kit is designed so that developers can copy the project, replace its alignme
 - A small, in-memory C++ interface for replacing the alignment core.
 - A deterministic reference star alignment and small synthetic contract tests.
 
-The supported platform is Linux. The implementation uses C++20 and CMake 3.18 or newer. CLI11 2.6.1, spdlog 1.16.0, doctest 2.4.12, and kseq from the pinned HAlign-5 revision are bundled; configuration and compilation do not download dependencies. Install a C++20 compiler, CMake, and zlib development files on the system. Tests additionally require Python 3.8 or newer; the executable does not require Python.
+The supported platform is Linux. The implementation uses C++17 and CMake 3.18 or newer. CLI11 2.6.1, spdlog 1.16.0, doctest 2.4.12, and kseq from the pinned HAlign-5 revision are bundled; configuration and compilation do not download dependencies. Install a C++17 compiler, CMake, and zlib development files on the system. Tests additionally require Python 3.8 or newer; the executable does not require Python.
 
 ## Architecture
 
@@ -51,12 +51,12 @@ struct Alignment {
     std::vector<std::string> rows;
 };
 
-Alignment align(std::span<const SequenceRecord> input);
+Alignment align(const std::vector<SequenceRecord>& input);
 
 }
 ```
 
-The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/align.cpp](src/align.cpp). The source directory contains seven files organized by responsibility:
+The input vector and records are not copied by this call. The framework owns them throughout the call, and the core must not modify them or retain references after returning. The declaration is in [include/msakit/core.hpp](include/msakit/core.hpp), with the replaceable implementation in [src/align.cpp](src/align.cpp). The source directory contains seven files organized by responsibility:
 
 ```text
 src/
@@ -79,7 +79,7 @@ The executable and test programs link the same framework library. The core depen
 | Change the shared result checks | [validation.cpp](src/validation.cpp) |
 | Implement an alignment algorithm | [align.cpp](src/align.cpp) |
 
-`main.cpp` calls `run_application()` in the command-line module. That function connects reading, core execution, result validation and writing. Internal declarations stay in one header, while implementation helpers remain local to their modules. This functional split leaves the 0.2.0 interface and input/output behavior unchanged.
+`main.cpp` calls `run_application()` in the command-line module. That function connects reading, core execution, result validation and writing. Internal declarations stay in one header, while implementation helpers remain local to their modules. Version 0.3.0 retains this seven-file organization and the input/output behavior of 0.2.0.
 
 Every returned row must preserve its corresponding cleaned input sequence when gaps are removed. All rows must have the same length, and no column may consist entirely of gaps. Rebuilt headers and duplicate records are preserved by input position rather than matched through a unique-name map.
 
@@ -140,9 +140,15 @@ Cleaning applies to the sequence bytes returned by kseq. Accepted lowercase `a/c
 
 This cleaning can discard ambiguity information. Output preservation is checked against the cleaned sequences supplied to the core. T and U remain distinct output characters; the reference core treats them as equivalent only when scoring.
 
-## Changes from 0.1.0
+## Migrating a core from 0.2.0
 
-The public core interface, CLI options, exit-code categories, gzip checks, and output protection remain unchanged. Input records now follow the fixed kseq version rather than the old strict FASTA parser:
+Version 0.3.0 lowers the language requirement from C++20 to C++17 and replaces the `std::span` parameter with `const std::vector<SequenceRecord>&`. Update both the declaration and definition of a custom `msakit::align`, along with any custom core callbacks or helper signatures using the old parameter. Remove unused `<span>` includes and adapt any span-specific operations. Calls that already pass the framework's input vector keep the same form: `align(records)`.
+
+Rebuild the framework, custom core, and tests together in a fresh build directory, then run the `contract` tests. The change is a source-interface change; the reference parameter still avoids copying records and preserves their positional identity. `SequenceRecord` and `Alignment` fields, CLI options, input/output rules, exit codes, and reference-algorithm behavior are unchanged. `--version` now reports `0.3.0`. See the [C++17 build checks](docs/testing.md#c17-build-compatibility) and [actual validation results](docs/validation.md) for compiler coverage.
+
+## Input changes introduced in 0.2.0
+
+Version 0.2.0 replaced the strict FASTA parser from 0.1.0 with the fixed kseq parser. Version 0.3.0 retains these input semantics, along with the same gzip checks and output protection:
 
 - FASTQ and mixed FASTA/FASTQ records recognized by kseq are accepted. Qualities are parsed for length consistency and discarded; output is always aligned FASTA.
 - Headers use `name` plus a nonempty `comment`, joined by one space when both are present. For example, `>sample\tinfo` produces `sample info`; original separator whitespace is not preserved byte for byte.
