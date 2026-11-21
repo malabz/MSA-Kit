@@ -15,8 +15,11 @@ struct Alignment {
     std::vector<std::string> rows;
 };
 
-// Replace the implementation in src/align.cpp, preserving this contract.
-// Input is nonempty, cleaned, gap-free and read-only. rows[i] belongs to input[i].
+// Implement this function in algorithm/align.cpp. Input records are nonempty,
+// cleaned (ACGTUN), gap-free and in input order. Headers can repeat.
+// Return one equal-width row per record in the same order. Removing '-' from
+// rows[i] must recover input[i].sequence. Every column must contain a residue.
+// Throw an exception to report failure; the framework handles I/O and errors.
 Alignment align(const std::vector<SequenceRecord>& input);
 
 }  // namespace msakit

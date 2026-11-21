@@ -29,13 +29,14 @@ To explore the result page immediately, choose the MSA-Kit example on [the submi
 
 Submit a public repository at [EasyMSA](https://easymsa.cn/#/benchmark/submit).
 The website pins a commit, builds it offline, runs small interface checks, and then evaluates the supported datasets.
-When deriving a tool from MSA-Kit, keep this directory and primarily replace `src/align.cpp`.
+When deriving a tool from MSA-Kit, keep this directory and primarily replace `algorithm/align.cpp`.
 
 ## 1. Required repository layout
 
 ```text
 your-repository/
 ├── CMakeLists.txt
+├── algorithm/align.cpp
 ├── src/
 ├── include/
 ├── extern/                  # Bundled offline dependencies
@@ -155,7 +156,7 @@ Other submitted programs receive original platform FASTA; this masking is specif
 Record its version and `IUPAC ambiguity -> N before alignment; restore original symbols afterwards` as preprocessing.
 Timing includes the adapter. The ordinary MSA-Kit CLI and core contract are unchanged.
 
-If only `src/align.cpp` changes, these four files usually need no edits. If the binary name/location changes,
+If only `algorithm/align.cpp` changes, these four files usually need no edits. If the binary name/location changes,
 update `build.sh` and `build-benchmark/msakit` in `adapter.py`. For another CLI, change `subprocess.run(...)`
 inside `run()`, including thread forwarding. Always validate the core output **before** restoring symbols;
 restoration must not hide changed or missing residues. A tool that handles IUPAC natively can implement a direct interface.

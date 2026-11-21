@@ -22,6 +22,8 @@
 
 ## 测试组织
 
+程序和测试共用 `src/` 中的框架。替换 [algorithm/align.cpp](../algorithm/align.cpp) 后重新构建，运行 `ctest -L contract`。可以用开发指南中的[单文件替换示例](guide.zh-CN.md#5-如何替换成自己的算法)验证这一流程。`reference` 分组专门检查附带核心的评分、缺口布局和精修。
+
 - [input_cases.py](../tests/input_cases.py)：稳定编号、原始字节、独立预期标题/序列/计数或错误记录号。
 - [msa_cases.py](../tests/msa_cases.py)：六组固定 FASTA、七组有界生成多序列数据。
 - [integration.py](../tests/integration.py)：运行真实程序，独立解析结果，检查管道、压缩与文件生命周期。

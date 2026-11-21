@@ -2,6 +2,45 @@
 
 **English** | [简体中文](validation.zh-CN.md)
 
+## Standalone algorithm verification, 2026-11-21
+
+The default in [algorithm/align.cpp](../algorithm/align.cpp) was restored from the full-panel reference core with SHA-256 `ae9a9abf2cfefa7d057d5294168d30374e7e6e24e69d7b0f219beec5e643cc18`. It uses pairwise gap −3 and one radius-four refinement pass.
+
+- GCC 9.5 Release, GCC 13.1 Release and GCC 13.1 Debug with ASan/UBSan each passed all four CTest entries. A separate exhaustive check reproduced the refined rows in 160 short synthetic groups, including 32 where refinement removed an empty column.
+- The benchmark adapter passed six unit tests. A fresh `benchmark/build.sh` build reproduced the archived FASTA byte for byte on all eight inputs in the table below. RNA255 #1 matched the earlier full-panel output (SHA-256 `a7098e81c816d17ef4d3850b226ec5eaf5f98e6f28bcea80a20587ec1950d489`).
+- In a separate copy, substituting [examples/minimal_core.cpp](../examples/minimal_core.cpp) for `algorithm/align.cpp` was the only source change. Both `contract` entries passed. The CLI and `benchmark/run.sh` produced the same three right-padded rows for `examples/tiny.fasta`.
+- In the earlier run of this refined algorithm on the full frozen EasyMSA panel, 24 of 26 datasets finished. The 1,000- and 10,000-sequence real mitochondrial datasets reached the 1,800-second limit. All 20 datasets with reference alignments finished. Their equally weighted mean Q was 0.978992 and mean TC was 0.723065.
+
+## Reference core accuracy and cost, 2026-11-21
+
+The baseline is commit `1c2593e` with linear gap −4 and a plain star merge. The new core uses gap −3 and one radius-four refinement pass. Q measures recovered reference residue pairs. TC measures recovered reference columns among columns containing at least two residues. The scorer verified the identity of each ungapped sequence and accumulated exact integer counts before rounding.
+
+| Input | Panel | Baseline Q | New Q | Baseline TC | New TC |
+| --- | --- | ---: | ---: | ---: | ---: |
+| RNA255 #1 | Development | 0.980157 | 0.992436 | 0.672067 | 0.825016 |
+| mt80 | Development | 0.904122 | 0.944396 | 0.558023 | 0.688395 |
+| mt95 | Development | 0.993966 | 0.994676 | 0.956750 | 0.963958 |
+| RNA255 #3 | Held out | 0.985906 | 0.992189 | 0.645578 | 0.796643 |
+| RNA255 #7 | Held out | 0.987628 | 0.993292 | 0.631783 | 0.750000 |
+| mt70 | Held out | 0.846211 | 0.894734 | 0.394656 | 0.502290 |
+| mt85 | Held out | 0.940959 | 0.967944 | 0.684100 | 0.799861 |
+| mt99 | Held out | 0.999919 | 0.999919 | 0.998696 | 0.998696 |
+
+Each `steps-128` replicate uses all 255 records in the [RNA archive](https://lab.malab.cn/soft/WMSA2/data/RNA-255.zip). The [simulated mtDNA archive](https://lab.malab.cn/~tfr/HAlign3_testdata/mt_like_diff_similarity.tar.xz) supplies the DNA fragments. For each identity label, take reference rows 0, 3, …, 93 in order. Development uses replicate 1 and columns [2000, 3536). Held-out DNA uses replicate 2 and columns [8000, 9536). Removing gaps produces each fragment's input. Keep its original aligned rows for scoring.
+
+Development compared gap costs 2 through 6, and two transition-aware alternatives (match +2, transition −1, transversion −2, gap −6 or −8), each with and without refinement. Selection averaged Q and TC per dataset, then averaged within each family and weighted DNA and RNA equally. Parameters were fixed before scoring the five held-out inputs. On EasyMSA RNA255, −3 alone gave Q 0.975293 and TC 0.640959. Refining the old −4 gave Q 0.992376 and TC 0.819831. The selected combination recovered 1,273 of 1,543 eligible columns, up from 1,037.
+
+| End-to-end cost, median of three | Baseline time | New time | Baseline peak RSS | New peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| RNA255 #1 | 1.592 s | 1.417 s | 40.81 MiB | 40.81 MiB |
+| mt80 fragment | 0.261 s | 0.275 s | 32.54 MiB | 32.54 MiB |
+
+Timing alternated run order on one pinned CPU of a shared server. Both versions used GCC 13.1 Release and the EasyMSA adapter. Timing includes masking, alignment, restoration and I/O. Scoring ran afterward. The new pairwise inner loop looks up substitution scores, and the core releases the pair projections before refinement.
+
+The selected candidate and final executable produced identical FASTA on all eight inputs. The normal `benchmark/build.sh` and `benchmark/run.sh` entry points reproduced the RNA255 result. All four CTest entries passed on GCC 9.5 Release, GCC 13.1 Release and GCC 13.1 Debug with ASan/UBSan. An independent exhaustive enumerator reproduced the final rows on 160 short groups, including 32 with a newly empty column. The input manifest, selection results, output hashes, raw timings and logs are retained in the server and local mirror's `build-star-tuning/` directory.
+
+## C++17 migration, 2026-10-27
+
 The C++17 migration was built and tested on the Linux server on 2026-10-27. This record describes newly executed checks for production, replacement-core and runtime-only configurations, starting from commit `a880fa7787e5a603c7b5db62924a972d8681e03e`. Version 0.3.0 changes the public core parameter to `const std::vector<SequenceRecord>&`; derived cores must update their signatures and rebuild with the framework. The seven-file layout and input/output behavior remain unchanged.
 
 ## Environment and source

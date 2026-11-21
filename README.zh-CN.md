@@ -6,6 +6,8 @@
 
 MSA-Kit 是 DNA/RNA 多序列比对程序和可复用的 C++ 模板，当前版本 **0.3.0**。先用本页的合成数据认识 MSA，再编译并运行程序；想开发算法时，继续阅读开发指南。运行下面的练习不要求先会 C++。
 
+**开发自己的比对算法**时，只需在 [algorithm/align.cpp](algorithm/align.cpp) 实现 `msakit::align()`。从零编写可以参考这个[可编译的最小示例](examples/minimal_core.cpp)。
+
 **阅读顺序：**[什么是 MSA](#what-is-msa) → [FASTA 输入](#fasta-input) → [准备环境](#setup) → [构建](#build-program) → [运行与读结果](#first-result) → [自己的输入](#your-own-input) → [结果检查](#check-result) → [开发算法](#develop-an-algorithm) → [网站评测](#easymsa-benchmark)。
 
 <a id="what-is-msa"></a>
@@ -199,7 +201,7 @@ MSA-Kit 会在成功写出前检查这些性质，说明程序保留了要求的
 
 ## 8. 从这个程序开始开发自己的算法
 
-完成上面的练习后，打开 [src/align.cpp](src/align.cpp)，找到 **Reference star alignment — replaceable core** 标记。附带算法选择第一条序列为中心，用 Needleman–Wunsch 做全局两两对齐，再合并中心的插入槽。
+完成上面的练习后，打开 [algorithm/align.cpp](algorithm/align.cpp)，找到 **Reference star alignment — replaceable core** 标记。参考算法选择第一条序列为中心，以每个 gap 扣 3 分做全局两两比对，再合并中心的插入槽。三条及以上序列做一轮精修，各碱基最多左右移动 4 列，只接受提高该行与其余行成对总分的调整。
 
 本例 A、C 之间需要容纳最长插入 GG，所以槽宽为 2；q1 的 T 左对齐得到 AT-C。核心使用完整动态规划表，适合学习和小型检查，长输入可能有较大时间和内存代价。
 
@@ -208,6 +210,7 @@ MSA-Kit 会在成功写出前检查这些性质，说明程序保留了要求的
 修改代码后重新编译，并运行通用约定检查：
 
 ```bash
+cmake --build build-learning --parallel 2
 (cd build-learning && ctest -L contract --output-on-failure)
 ```
 

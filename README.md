@@ -6,6 +6,8 @@ Use one project to understand multiple sequence alignment, produce your first re
 
 MSA-Kit is a DNA/RNA alignment program and a reusable C++ template, currently **version 0.3.0**. Work through the synthetic example on this page, build and run the program, then continue to the developer guide when you want to change its algorithm. You do not need C++ knowledge to run these exercises.
 
+**Writing an aligner?** Implement `msakit::align()` in [algorithm/align.cpp](algorithm/align.cpp). For a small starting point, see the [complete replacement example](examples/minimal_core.cpp).
+
 **Reading path:** [What MSA does](#what-is-msa) → [FASTA input](#fasta-input) → [Setup](#setup) → [Build](#build-program) → [Run and read the result](#first-result) → [Your own input](#your-own-input) → [Result checks](#check-result) → [Develop an algorithm](#develop-an-algorithm) → [Website evaluation](#easymsa-benchmark).
 
 <a id="what-is-msa"></a>
@@ -199,7 +201,7 @@ The supplied project registers four CTest entries. A successful complete run rep
 
 ## 8. Develop an algorithm inside this program
 
-After completing the exercise, open [src/align.cpp](src/align.cpp) and find **Reference star alignment — replaceable core**. The supplied algorithm chooses the first sequence as the center, uses Needleman–Wunsch global pairwise alignment, and merges insertions around that center.
+After completing the exercise, open [algorithm/align.cpp](algorithm/align.cpp) and find **Reference star alignment — replaceable core**. The supplied algorithm aligns each sequence to the first with a linear gap score of −3, then merges their insertions. For three or more rows it makes one refinement pass. Each residue can move up to four columns if the revised row improves its score against the others.
 
 In the example, the slot between A and C needs room for GG, so its width is two. q1's T is left-aligned there to give AT-C. The core stores full dynamic-programming tables: it is useful for learning and small checks, but long inputs can have substantial time and memory cost.
 
@@ -208,6 +210,7 @@ Writing an algorithm requires C++ knowledge, while readers and the CLI can be re
 After source changes, rebuild and run the reusable contract checks:
 
 ```bash
+cmake --build build-learning --parallel 2
 (cd build-learning && ctest -L contract --output-on-failure)
 ```
 

@@ -29,11 +29,12 @@ build.sh 只负责一次构建；run.sh 每次收到一个序列文件，写出 
 
 网站入口：[EasyMSA — 提交评测](https://easymsa.cn/#/benchmark/submit)。
 提交公开 GitHub 仓库后，网站会固定提交版本，依次执行构建、小样本接口预检和正式数据集评测。
-**基于本项目开发时，保留下面四个文件，主要修改 `src/align.cpp` 即可。**
+**基于本项目开发时，保留下面四个文件，主要修改 `algorithm/align.cpp` 即可。**
 
 ```text
 your-repository/
 ├── CMakeLists.txt
+├── algorithm/align.cpp
 ├── src/
 ├── include/
 ├── extern/                  # 已随仓库提供的离线依赖
@@ -145,7 +146,7 @@ exec python3 benchmark/adapter.py "$1" "$2" "$3" "$4"
 4. 先核对短 ID、行长及去 gap 后的**清洗后序列**，拒绝核心改写、漏行等错误。
 5. 按每个非 gap 字符在原序列中的位置恢复模糊碱基和完整标题，再写出最终文件。
 
-只替换 `src/align.cpp` 时，这四个接入文件通常无需修改。若更改可执行文件名或位置，
+只替换 `algorithm/align.cpp` 时，这四个接入文件通常无需修改。若更改可执行文件名或位置，
 同步修改 `build.sh` 和 `adapter.py` 中的 `build-benchmark/msakit`；若改用其他 CLI，
 修改适配器 `run()` 中的 `subprocess.run(...)` 参数及线程传递。
 保留“先校验核心输出，再恢复原字符”的顺序，不能直接用原序列覆盖错误输出来绕过检查。

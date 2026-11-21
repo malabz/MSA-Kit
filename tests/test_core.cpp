@@ -2,12 +2,14 @@
 #include <doctest/doctest.h>
 
 #include "msakit/core.hpp"
+#include "msakit/detail/checked_size.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,7 +38,7 @@ int score_rows(const std::string& a, const std::string& b) {
     int score = 0;
     for (std::size_t i = 0; i < a.size(); ++i) {
         REQUIRE_FALSE((a[i] == '-' && b[i] == '-'));
-        score += (a[i] == '-' || b[i] == '-') ? -4 : residue_score(a[i], b[i]);
+        score += (a[i] == '-' || b[i] == '-') ? -3 : residue_score(a[i], b[i]);
     }
     return score;
 }
@@ -50,8 +52,8 @@ void enumerate_scores(std::string_view a, std::string_view b,
         best = std::max(best, score);
         return;
     }
-    if (i != a.size()) enumerate_scores(a, b, i + 1, j, score - 4, best);
-    if (j != b.size()) enumerate_scores(a, b, i, j + 1, score - 4, best);
+    if (i != a.size()) enumerate_scores(a, b, i + 1, j, score - 3, best);
+    if (j != b.size()) enumerate_scores(a, b, i, j + 1, score - 3, best);
     if (i != a.size() && j != b.size()) {
         enumerate_scores(a, b, i + 1, j + 1, score + residue_score(a[i], b[j]), best);
     }
@@ -136,14 +138,32 @@ TEST_CASE("diagonal first traceback gives the specified tied alignment" * doctes
           std::vector<std::string>{"AA", "-A"});
 }
 
-TEST_CASE("default gap cost is four points per character" * doctest::test_suite("reference")) {
+TEST_CASE("default pairwise gap cost is three points per character" * doctest::test_suite("reference")) {
     // A one-base shift gains matches but costs two terminal gaps.
-    // At length four mismatches win; at length five the shift wins.
+    // At length three mismatches win; at length four the shift wins.
+    const auto three = msakit::align(records({"ACA", "CAC"}));
+    CHECK(three.rows == std::vector<std::string>{"ACA", "CAC"});
     const auto four = msakit::align(records({"ACAC", "CACA"}));
-    CHECK(four.rows == std::vector<std::string>{"ACAC", "CACA"});
-    const auto five = msakit::align(records({"ACACA", "CACAC"}));
-    CHECK(five.rows[0].size() == 6);
-    CHECK(score_rows(five.rows[0], five.rows[1]) == -4);
+    CHECK(four.rows[0].size() == 5);
+    CHECK(score_rows(four.rows[0], four.rows[1]) == -3);
+}
+
+TEST_CASE("profile pass moves supported insertions and keeps ties in place" * doctest::test_suite("reference")) {
+    // The seed puts the middle row's insertion in the first slot column.
+    CHECK(msakit::align(records({"AG", "AUG", "ACTG"})).rows ==
+          std::vector<std::string>{"A--G", "A-UG", "ACTG"});
+    CHECK(msakit::align(records({"AG", "ANG", "ACNG"})).rows ==
+          std::vector<std::string>{"A--G", "AN-G", "ACNG"});
+    CHECK(msakit::align(records({"AG", "ACG", "ATTTTCG"})).rows[1] == "A----CG");
+    CHECK(msakit::align(records({"AG", "ACG", "ATTTTTCG"})).rows[1] == "AC-----G");
+}
+
+TEST_CASE("profile pass compacts columns emptied by accepted moves" * doctest::test_suite("reference")) {
+    const auto input = records({"CCA", "AAAA", "CAAC", "CCAAC"});
+    // Seed rows: -CC-A-, AAA-A-, -CA-AC, -CCAAC.
+    const auto polished = msakit::align(input);
+    CHECK(polished.rows == std::vector<std::string>{"-CCA-", "-AAAA", "-CAAC", "CCAAC"});
+    msakit::detail::validate_alignment(input, polished);
 }
 
 TEST_CASE("short pairwise reference scores match exhaustive path enumeration" * doctest::test_suite("reference")) {
@@ -191,9 +211,9 @@ TEST_CASE("small generated multiple alignments preserve input and repeat exactly
 }
 
 TEST_CASE("direct core calls reject empty or unprepared input" * doctest::test_suite("reference")) {
-    CHECK_THROWS_AS(msakit::align(std::vector<SequenceRecord>{}), msakit::detail::Error);
+    CHECK_THROWS_AS(msakit::align(std::vector<SequenceRecord>{}), std::invalid_argument);
     for (const std::string sequence : {"", "a", "A-", "A.", "R", "A "}) {
-        CHECK_THROWS_AS(msakit::align(records({sequence})), msakit::detail::Error);
+        CHECK_THROWS_AS(msakit::align(records({sequence})), std::invalid_argument);
     }
 }
 
@@ -214,20 +234,20 @@ TEST_CASE("framework validation rejects malformed output independent of the core
     CHECK_NOTHROW(msakit::detail::validate_alignment(input, Alignment{{"A-C", "AG-"}}));
 }
 
-TEST_CASE("checked size and score arithmetic reject overflow without large allocation") {
+TEST_CASE("checked size and score arithmetic reject overflow without large allocation" * doctest::test_suite("reference")) {
     using namespace msakit::detail;
     const auto maximum = std::numeric_limits<std::size_t>::max();
     CHECK(checked_add(10, 20) == 30);
     CHECK(checked_add(maximum, 0) == maximum);
-    CHECK_THROWS_AS(checked_add(maximum, 1), Error);
+    CHECK_THROWS_AS(checked_add(maximum, 1), std::length_error);
     CHECK(checked_multiply(0, maximum) == 0);
     CHECK(checked_multiply(6, 7) == 42);
-    CHECK_THROWS_AS(checked_multiply(maximum, 2), Error);
-    CHECK_NOTHROW(check_score_bounds(12, 20));
+    CHECK_THROWS_AS(checked_multiply(maximum, 2), std::length_error);
+    CHECK_NOTHROW(check_score_bounds<3>(12, 20));
     if constexpr (sizeof(std::size_t) >= sizeof(std::int64_t)) {
         const auto score_max = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
-        CHECK_NOTHROW(check_score_bounds(score_max / 4, 0));
-        CHECK_THROWS_AS(check_score_bounds(score_max / 4, 1), Error);
-        CHECK_THROWS_AS(check_score_bounds(maximum, 0), Error);
+        CHECK_NOTHROW(check_score_bounds<3>(score_max / 3, 0));
+        CHECK_THROWS_AS(check_score_bounds<3>(score_max / 3, 1), std::length_error);
+        CHECK_THROWS_AS(check_score_bounds<3>(maximum, 0), std::length_error);
     }
 }

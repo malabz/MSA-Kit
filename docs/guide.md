@@ -4,7 +4,7 @@
 
 This guide connects [the README's alignment example](../README.md#first-result) to the C++ implementation. Follow the same three records as they become input objects, aligned rows and an output file. The explanations below introduce each interface term where it is used.
 
-MSA-Kit 0.3.0 is a reusable DNA/RNA multiple-sequence alignment template. Keep the CLI, input/output and validation layers and replace the algorithm in `src/align.cpp`. It uses C++17 and the pinned HAlign-5 kseq parser. See the [design](design.md) for the full contract and [validation](validation.md) for measured checks.
+MSA-Kit 0.3.0 is a reusable DNA/RNA multiple-sequence alignment template. Keep the CLI, input/output and validation layers and replace the algorithm in `algorithm/align.cpp`. It uses C++17 and the pinned HAlign-5 kseq parser. See the [design](design.md) for the full contract and [validation](validation.md) for measured checks.
 
 ## 1. Responsibilities and data flow
 
@@ -22,8 +22,8 @@ The **CLI** interprets command-line arguments such as `-i` and `-o`. **kseq** is
 | `src/input.cpp` | File/stdin lifecycle, strict gzip, kseq, cleaning and counts. |
 | `src/output.cpp` | File identity, formatting, temporary files and atomic publication. |
 | `src/validation.cpp` | Algorithm-independent output checks. |
-| `src/align.cpp` | Replaceable reference star core. |
-| `src/internal.hpp` | Shared internal types, errors and checked arithmetic. |
+| `algorithm/align.cpp` | Replaceable reference star core. |
+| `src/internal.hpp` | Framework types, errors and I/O declarations. |
 
 The executable and tests link the same support library. kseq is instantiated only in input code. The core uses the standard library, without CLI11, spdlog or zlib headers.
 
@@ -53,13 +53,13 @@ For `examples/tiny.fasta`, the input vector is a list of three records. The C++ 
 
 `const` makes the incoming list read-only; `&` passes a reference to the framework's existing list rather than copying it. `rows[i]` uses the same index so the writer can reunite the right name with the right aligned sequence. The table describes this example's computed result; your implementation must compute rows for every input, not return these fixed strings.
 
-Before editing, identify these three points in [align.cpp](../src/align.cpp): `align()` receives the records, `align_pair()` builds pairwise alignments, and the insertion-slot merge constructs the final rows. Start by tracing AC/ATC/AGGC through them. Keep reading and writing in the surrounding modules while you change the calculation.
+In [align.cpp](../algorithm/align.cpp), `align()` receives the records, `align_pair()` builds each pairwise alignment, `build_star()` merges insertion slots, and `refine_alignment()` adjusts the rows once. Start by tracing AC/ATC/AGGC through them.
 
 The core does not parse arguments, access files, handle headers, or write stdout. Throw an exception on failure; the application maps core/allocation/contract failures to exit 5. New algorithm settings belong in the CLI and explicit configuration, not an independent argument parser inside the core.
 
 ### Migration from 0.2.0
 
-Replace `std::span<const SequenceRecord>` with `const std::vector<SequenceRecord>&` in declarations, definitions and callbacks; remove unused `<span>` and adapt span-specific operations. Calls remain `align(records)`. Rebuild framework, core and tests together in a fresh directory. Record fields, CLI, ordering, exit codes and reference scoring are unchanged; `--version` reports `0.3.0`.
+Replace `std::span<const SequenceRecord>` with `const std::vector<SequenceRecord>&` in declarations, definitions and callbacks; remove unused `<span>` and adapt span-specific operations. Calls remain `align(records)`. Rebuild framework, core and tests together in a fresh directory. The public record fields, CLI, ordering and exit codes carry over; `--version` reports `0.3.0`.
 
 ## 3. Input preparation
 
@@ -95,8 +95,22 @@ Input/output paths are required; `-` selects stdin/stdout. Output ending in `.gz
 
 ## 5. Replacing the algorithm
 
-1. Build and test the unchanged template.
-2. Implement `msakit::align` in `src/align.cpp`, preserving identity and ownership.
+The production executable links the `align()` defined in [algorithm/align.cpp](../algorithm/align.cpp). This file owns center selection, pairwise scoring, merging and refinement. A fork can replace its entire contents with a function that includes [msakit/core.hpp](../include/msakit/core.hpp). Keep the file path and signature and the usual CMake and EasyMSA commands will build your implementation.
+
+To try the interface in a fresh copy, substitute the [minimal core](../examples/minimal_core.cpp). It pads each sequence on the right to demonstrate how to return legal rows. For the tiny input it produces `AC--`, `ATC-` and `AGGC`.
+
+```bash
+cp examples/minimal_core.cpp algorithm/align.cpp
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel 2
+(cd build && ctest -L contract --output-on-failure)
+./build/msakit -i examples/tiny.fasta -o -
+```
+
+For your own method:
+
+1. Start with the supplied core or the minimal example in your fork.
+2. Implement `msakit::align` in `algorithm/align.cpp`, preserving identity and ownership.
 3. Keep file/CLI behavior in the surrounding layers.
 4. Run the contract tests; add algorithm-specific scoring and edge-case tests.
 5. Update or replace reference-only tests if their exact gap layout no longer applies.
@@ -105,9 +119,9 @@ For website submission, follow the separate [Benchmark integration tutorial](../
 
 ## 6. Reference star alignment
 
-The source is marked **Reference star alignment — replaceable core**. Sequence 0 is the center. Each remaining sequence is globally aligned to it with Needleman–Wunsch. Match scores +1, mismatch -1, each gap -4. Any pair containing N scores 0, including N/N; T/U match for scoring while their output characters stay unchanged.
+The source is marked **Reference star alignment — replaceable core**. Sequence 0 is the center. Each remaining sequence is globally aligned to it with Needleman–Wunsch. Match scores +1, mismatch -1, and each gap scores -3. A substitution involving N scores 0, including N/N. T and U count as a match.
 
-Tie order is diagonal, consume center only, then consume query only. A center of length L has L+1 insertion slots, including prefix/suffix. Each slot takes the maximum insertion length across queries. Insertions are left-aligned and right-padded; the center receives gaps in slots. Insertions are not realigned to each other.
+Tie order is diagonal, consume center only, then consume query only. A center of length L has L+1 insertion slots, including prefix/suffix. Each slot takes the maximum insertion length across queries. The initial merge left-aligns the insertions and pads them on the right. For three or more rows, one pass then moves residues up to four columns while preserving order. Each accepted row must improve its score against the other rows, counting a base/gap pair as -2. At the end the core removes entirely empty columns. The precise scoring and tie rules are in the [design](design.md#one-refinement-pass).
 
 ```fasta
 >center
@@ -127,7 +141,7 @@ This is the output for center `AC`, q1 `ATC`, q2 `AGGC` in [tiny.fasta](../examp
 cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON -DMSAKIT_ENABLE_SANITIZERS=ON
 cmake --build build-sanitize --parallel 2
-(cd build-sanitize && ctest --output-on-failure)
+(cd build-sanitize && ctest -L contract --output-on-failure)
 ```
 
 All rows must have the input count and order, equal positive widths, only `ACGTUN-`, exact cleaned residues after removing gaps, and no all-gap column. Different valid algorithms may choose different gaps. `reference` tests constrain only the supplied algorithm; plain CTest runs both groups.

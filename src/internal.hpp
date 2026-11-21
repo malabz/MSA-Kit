@@ -6,14 +6,13 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
-#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-// Keep the replaceable core independent of zlib and other third-party headers.
+// Only the input and output implementations need the full zlib definition.
 struct z_stream_s;
 
 namespace msakit::detail {
@@ -39,35 +38,6 @@ private:
 }
 
 inline constexpr std::size_t kBufferSize = 64 * 1024;
-
-// Checked arithmetic for the replaceable core.
-inline std::size_t checked_add(std::size_t left, std::size_t right) {
-    if (right > std::numeric_limits<std::size_t>::max() - left) {
-        throw Error(kCoreError, "alignment size addition overflow");
-    }
-    return left + right;
-}
-
-inline std::size_t checked_multiply(std::size_t left, std::size_t right) {
-    if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
-        throw Error(kCoreError, "alignment size multiplication overflow");
-    }
-    return left * right;
-}
-
-// Every global-alignment score lies between -kGapPenalty * (center + query) and
-// min(center, query). Check before converting lengths to signed scores.
-constexpr std::int64_t kGapPenalty = 4;
-
-inline void check_score_bounds(std::size_t center, std::size_t query) {
-    constexpr auto limit = static_cast<std::uint64_t>(
-        std::numeric_limits<std::int64_t>::max() / kGapPenalty);
-    if (center > limit || query > limit ||
-        static_cast<std::uint64_t>(center) >
-            limit - static_cast<std::uint64_t>(query)) {
-        throw Error(kCoreError, "sequence lengths exceed signed score range");
-    }
-}
 
 // Command line and application flow.
 struct Options {

@@ -44,8 +44,8 @@ target_link_libraries(msakit_support PRIVATE msakit_build_options ZLIB::ZLIB Thr
 
 # Replace this source to supply a different algorithm; the surrounding library
 # and executable keep the same input, output, validation and command-line rules.
-add_library(msakit_core STATIC src/align.cpp)
-target_include_directories(msakit_core PUBLIC include PRIVATE src)
+add_library(msakit_core STATIC algorithm/align.cpp)
+target_include_directories(msakit_core PUBLIC include)
 target_link_libraries(msakit_core PRIVATE msakit_build_options)
 
 add_executable(msakit src/main.cpp)

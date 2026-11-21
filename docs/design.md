@@ -54,28 +54,20 @@ flowchart LR
 | Input | Files/stdin, strict gzip decoding, kseq records, cleaning, and statistics | `src/input.cpp` |
 | Output | File identity checks, FASTA/gzip serialization, protected writes, and atomic publication | `src/output.cpp` |
 | Result validation | Row identity/count, lengths, residues, and column checks | `src/validation.cpp` |
-| Core | Align validated in-memory sequences | `src/align.cpp` |
-| Internal interface | Types, declarations, fault seams, error categories, and checked arithmetic | `src/internal.hpp` |
+| Core | Align validated in-memory sequences | `algorithm/align.cpp` |
+| Internal interface | Framework types, declarations, fault seams, and error categories | `src/internal.hpp` |
 | Public interface | Declare the record types and the core entry point | `include/msakit/core.hpp` |
 
-The public types are in [core.hpp](../include/msakit/core.hpp), and the replaceable
-algorithm is in [align.cpp](../src/align.cpp). The core has no
-dependency on CLI11, spdlog, filesystem paths, or compression. The surrounding
-layers own those concerns. There is one selected core implementation in the
-executable, rather than a runtime plugin loader. `src` contains seven files:
-six implementation files grouped by function and one shared internal header.
-The command-line module owns `run_application()` and its core-function injection
-point; `main.cpp` only calls it with the selected algorithm. The shared internal header uses
-standard-library types and a forward declaration of `z_stream_s`, so including
-it in the core does not require zlib, CLI11, or logging headers. The vendored
-parser is [extern/kseq/kseq.h](../extern/kseq/kseq.h).
+The algorithm target compiles [algorithm/align.cpp](../algorithm/align.cpp) against the public [core.hpp](../include/msakit/core.hpp). The reference uses a small checked-arithmetic header and the C++ standard library. A replacement core can include only `msakit/core.hpp`. The executable links one implementation of `msakit::align()`.
+
+The `src/` directory contains `main.cpp`, the four framework modules and their internal header. `main.cpp` passes the algorithm to `run_application()`. The CLI module calls the core between reading input and validating the result. kseq is in [extern/kseq/kseq.h](../extern/kseq/kseq.h).
 
 The support library compiles the command-line, input, output and validation
 modules separately. The production executable and test drivers link this same
 library. kseq is instantiated only in the input implementation; zlib-specific
 helpers stay in the input/output implementations. Shared error helpers use only
 the standard library. Each implementation includes its own dependencies.
-Version 0.3.0 retains this seven-file organization and version 0.2.0's
+Version 0.3.0 retains version 0.2.0's
 record, CLI, output, and error semantics. Its core parameter changes to a
 read-only vector reference to support C++17, as described below.
 
@@ -151,7 +143,7 @@ same const vector reference. Ordinary calls passing the input vector remain
 
 Rebuild the framework, custom core, and tests together in a fresh build
 directory and run the contract group. The fields in `SequenceRecord` and
-`Alignment`, record ordering, reference-algorithm rules, and runtime data
+`Alignment`, record ordering and runtime data
 contracts do not change. CLI options and exit codes remain the same;
 `--version` reports `0.3.0`.
 
@@ -366,7 +358,7 @@ For center `c` and query `q`, substitution scoring is defined in this order:
 2. If characters are equal, or are the pair `T`/`U`, score +1.
 3. Otherwise score -1.
 
-Every gap character scores -4, including terminal gaps. There is no local
+Every gap character scores -3, including terminal gaps. There is no local
 clipping, free-end gap, affine-gap option, or reverse-complement search. T/U
 equivalence changes only scoring; the aligned strings retain their original
 cleaned `T` or `U` characters.
@@ -375,12 +367,12 @@ Let `i` and `j` be the numbers of consumed center and query characters:
 
 ```text
 D(0, 0) = 0
-D(i, 0) = -i
-D(0, j) = -j
+D(i, 0) = -3i
+D(0, j) = -3j
 D(i, j) = max(
     D(i-1, j-1) + substitution(c[i-1], q[j-1]),
-    D(i-1, j) - 1,
-    D(i, j-1) - 1
+    D(i-1, j) - 3,
+    D(i, j-1) - 3
 )
 ```
 
@@ -413,15 +405,34 @@ q1      ATC            q1      AT-C
 q2      AGGC           q2      AGGC
 ```
 
-Insertion strings sharing a slot are not aligned against one another. This is
-a deterministic teaching merge, not a claim of optimal insertion homology or
-optimal multiple sequence alignment.
+The slot merge produces the initial alignment. In this example, the refinement
+pass keeps all three rows in place.
+
+### One refinement pass
+
+For three or more rows, visit each row once in input order, including the
+center. Temporarily remove the row from the alignment's column counts. Place
+its residues in strictly increasing columns, each within four columns of its
+original position. Dynamic programming considers at most nine positions per
+residue. It maximizes the sum of scores against the other rows. Base pairs use
+the pairwise substitution scores above, a base opposite a gap scores -2, and
+two gaps score 0. On tied scores prefer the least total displacement, then
+the earlier columns when comparing placements from the last residue backwards.
+
+Accept a move only if the score strictly increases. Add the accepted row (or
+the original on a tie) back to the counts before refining the next row. Remove
+columns that became entirely gaps after the pass. A row without gaps has only
+one possible placement. A two-sequence input returns its optimal pairwise
+alignment directly. The constants for both stages are in `algorithm/align.cpp`.
 
 ### Cost and failure boundaries
 
 Let `n` be the sequence count, `L` the center length, `m_i` each query length,
-and `W` the final alignment width. Pairwise calculation costs
-`O(L × sum(m_i))` time; construction and validation add `O(n × W)`. Process
+and `W` the width after the slot merge. Pairwise calculation costs
+`O(L × sum(m_i))` time. With radius `b=4`, the extra sweep costs
+`O(n × W + (2b+1) × total residues)` time. It keeps one column profile and
+one row's traceback, using `O(W + (2b+1) × longest row length)` extra space.
+Construction and validation take `O(n × W)` time. Process
 queries sequentially and release each pairwise DP table before the next one.
 The largest full DP table occupies `O((L+1) × (max(m_i)+1))` space; inputs,
 stored pairwise/slot information, and the final `O(n × W)` matrix also consume
@@ -439,7 +450,7 @@ A developer replacing the supplied core should:
 
 1. Copy or clone the project and build its unchanged reference implementation.
 2. Read the public interface and result conditions in section 3.
-3. Replace the marked `align` implementation in `src/align.cpp`, retaining
+3. Replace the marked `align` implementation in `algorithm/align.cpp`, retaining
    the public declaration. Additional private algorithm helpers may be added;
    update the build inputs if extra translation units are introduced.
 4. Keep CLI parsing, input cleaning, header handling, output writing, and result

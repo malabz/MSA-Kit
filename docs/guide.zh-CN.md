@@ -4,7 +4,7 @@
 
 本指南把 [README 的比对示例](../README.zh-CN.md#first-result) 与 C++ 实现连起来：跟踪同样三条记录如何变成输入对象、对齐字符串和输出文件，在使用接口的地方解释相关术语。
 
-MSA-Kit 0.3.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，`src` 按功能组织为七个文件，派生开发者主要编辑 `src/align.cpp`。
+MSA-Kit 0.3.0 是可复制的 DNA/RNA 多序列比对程序模板：复用输入输出、命令行和结果验证代码，把开发工作集中在比对算法上。本版采用 HAlign-5 固定版本的 `kseq.h` 读取 FASTA/FASTQ，框架位于 `src/`，算法独立放在 `algorithm/align.cpp`。
 
 仓库已包含 C++17 实现、参考星比对、小型示例和测试。实际执行的构建与测试结果见 [验证记录](validation.zh-CN.md)。
 
@@ -42,18 +42,18 @@ FASTA / gzip 写出
 
 ```text
 include/msakit/core.hpp    # 公共核心接口
+algorithm/align.cpp       # 派生项目替换这里的 msakit::align()
 src/
 ├── main.cpp              # 极简程序入口
 ├── cli.cpp               # 参数、日志、调用流程和异常处理
 ├── input.cpp             # 文件/stdin、gzip 解压、kseq 解析和清洗
 ├── output.cpp            # FASTA/gzip 写出、路径保护和原子发布
 ├── validation.cpp        # 比对结果的通用合法性检查
-├── align.cpp             # 可替换的参考星比对核心
-└── internal.hpp          # 共用类型、声明、错误和尺寸检查
+└── internal.hpp          # 框架内部类型、声明和错误
 extern/kseq/kseq.h        # 固定来源并带安全补丁的读取依赖
 ```
 
-`main.cpp` 调用命令行模块中的 `run_application()`，后者按顺序完成读取与清洗、输出路径检查、核心比对、结果验证和输出。命令行、输入、输出、验证各自独立编译，再组成 `msakit_support` 库，供程序、模块测试和替代核心测试共同使用；`msakit_core` 保留独立算法目标。共用声明集中在一个 `internal.hpp` 中，按职责分段。该头文件通过前向声明引用 zlib 流类型，因此算法编译不必包含 zlib、CLI11 或日志库头文件。
+`main.cpp` 调用命令行模块中的 `run_application()`，后者按顺序完成读取与清洗、输出路径检查、核心比对、结果验证和输出。命令行、输入、输出、验证各自独立编译，再组成 `msakit_support` 库，供程序、模块测试和替代核心测试共同使用；`msakit_core` 保留独立算法目标。共用声明集中在一个 `internal.hpp` 中，按职责分段。算法目标编译时只使用 `include/` 和 C++ 标准库。
 
 后续开发可以按任务定位文件：
 
@@ -63,9 +63,9 @@ extern/kseq/kseq.h        # 固定来源并带安全补丁的读取依赖
 | 输入格式解析、字符清洗、转换统计 | [input.cpp](../src/input.cpp) |
 | 输出格式、折行、压缩和文件保护 | [output.cpp](../src/output.cpp) |
 | 所有核心都必须满足的结果规则 | [validation.cpp](../src/validation.cpp) |
-| 比对算法 | [align.cpp](../src/align.cpp) |
+| 比对算法 | [align.cpp](../algorithm/align.cpp) |
 
-0.3.0 保留上述七文件结构，将最低语言标准改为 C++17，并将核心参数改为只读 `vector` 引用。输入行为、算法、命令行参数和退出码均沿用 0.2.0 的约定。
+0.3.0 使用 C++17，核心参数为只读 `vector` 引用。输入格式、命令行参数和退出码沿用 0.2.0 的约定。
 
 ## 2. 核心接收和返回什么
 
@@ -106,7 +106,7 @@ SequenceRecord 把名称和序列放在一起；Alignment 保存对齐后的字�
 
 const 让传入列表只读，`&` 表示引用框架已有列表而不复制。rows[i] 与 input[i] 使用相同下标，输出层就能把正确名称与对齐序列重新组合。表格描述这次示例计算出的结果；算法必须为实际输入计算，不能固定返回这几个字符串。
 
-修改前先在 [align.cpp](../src/align.cpp) 找到三处：align() 接收记录、align_pair() 做两两对齐、插入槽合并构造最终行。先跟踪 AC/ATC/AGGC 如何经过它们，再替换计算部分；读取和写出继续使用外围模块。
+修改前可以在 [align.cpp](../algorithm/align.cpp) 跟踪 AC/ATC/AGGC 的处理过程。`align()` 接收记录，`align_pair()` 做两两比对，`build_star()` 合并插入槽，`refine_alignment()` 调整一轮列位置。
 
 记录位置是内部身份，标题可以重复。不要用标题作为唯一键，否则同名记录可能被覆盖。输出层使用重建后保存的标题，因此核心只需返回对齐后的序列字符串。
 
@@ -224,9 +224,23 @@ FASTQ 使用相同的输入参数，例如 `./build/msakit -i reads.fastq.gz -o 
 
 ## 5. 如何替换成自己的算法
 
+程序和 EasyMSA 评测入口都调用 [algorithm/align.cpp](../algorithm/align.cpp) 中的 `msakit::align()`。选中心、双序列评分、插入槽合并和精修都在这个文件里。自己从头实现时，只需包含 [msakit/core.hpp](../include/msakit/core.hpp)，按同一签名返回各行。保留这个路径后，原有 CMake 配置和评测脚本就会构建你的实现。
+
+可以在新复制的仓库中试用[最小替代核心](../examples/minimal_core.cpp)。这个示例用右侧补缺口演示接口约定，运行仓库中的小型输入会得到 `AC--`、`ATC-`、`AGGC` 三行。
+
+```bash
+cp examples/minimal_core.cpp algorithm/align.cpp
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel 2
+(cd build && ctest -L contract --output-on-failure)
+./build/msakit -i examples/tiny.fasta -o -
+```
+
+开发自己的算法时，可按以下步骤操作：
+
 1. 复制或克隆 MSA-Kit，阅读英文设计中的输入、核心和输出约定。
 2. 打开 [include/msakit/core.hpp](../include/msakit/core.hpp)，确认 `SequenceRecord`、`Alignment` 和 `align` 的含义。
-3. 在 [src/align.cpp](../src/align.cpp) 中找到标注为 **Reference star alignment — replaceable core** 的实现入口，用自己的算法替换 `msakit::align` 的实现。保持文件位置和函数签名时，无需调整外围代码；拆分或重命名源文件时，相应更新 CMake 的 `msakit_core` 目标。
+3. 在 [algorithm/align.cpp](../algorithm/align.cpp) 中找到标注为 **Reference star alignment — replaceable core** 的实现入口，用自己的算法替换 `msakit::align` 的实现。保持文件位置和函数签名时，无需调整外围代码；拆分或重命名源文件时，相应更新 CMake 的 `msakit_core` 目标。
 4. 保持输入只读，并按输入位置填充 `Alignment::rows`。算法内部可以使用不同的数据结构、评分或中心选择方式。
 5. 保留通用约定测试，为新算法补充小型正确性测试，并调整参考算法专属断言。参考算法的最优分数、固定 gap 布局和并列规则测试分布在 [核心测试](../tests/test_core.cpp) 和 [集成测试](../tests/integration.py)，新算法不必复现这些布局；重新构建与测试的命令见第 4、7 节。
 6. 更新项目名称、算法说明和适用范围，保留实际复用代码的许可及来源声明。
@@ -237,7 +251,7 @@ FASTQ 使用相同的输入参数，例如 `./build/msakit -i reads.fastq.gz -o 
 
 参考实现使用第一条输入作为中心，逐条执行 Needleman–Wunsch 全局比对，完整消费中心和查询序列。
 
-评分为匹配 `+1`、错配 `-1`、每个 gap 字符 `-4`。只要一侧为 `N` 就记 `0`，包括 `N/N`；这条规则先于字符相等判断。T/U 按匹配计分，但回溯结果保留原字符。
+两两比对的匹配得分为 `+1`，错配为 `-1`，每个 gap 字符为 `-3`。涉及 `N` 的碱基替换记 `0`，包括 `N/N`。T/U 按匹配计分，回溯保留原字符。
 
 并列回溯按固定顺序选择：同时消费中心和查询；仅消费中心、查询填 gap；仅消费查询、中心填 gap。这个顺序让参考结果可重复。
 
@@ -265,7 +279,7 @@ AT-C
 AGGC
 ```
 
-中心的 A 和 C 之间需要容纳最长的两个插入字符；q1 的一个插入字符 T 在这个槽中左对齐。槽内插入串不会再互相比对，因此该规则只是易读、确定的参考合并方法，不保证最优多序列比对。
+中心的 A 和 C 之间需要容纳最长的两个插入字符，q1 的一个 T 在这个槽中左对齐。三条及以上序列会按输入顺序精修一轮。每个碱基最多左右移动 4 列，保持碱基顺序；每行对照其余行的列频数打分，碱基对 gap 扣 2 分，只接受成对总分严格提高的布局。本例保留初稿。精修完成后删除全 gap 列。两阶段的参数都在 `algorithm/align.cpp`。
 
 两两计算时间为 `O(L × Σmᵢ)`，还需构造并验证最终矩阵。动态规划表逐条查询分配并释放，其峰值取决于中心与最长查询的长度；最终对齐矩阵和插入信息也占用内存。计算和分配前检查尺寸、字节数、评分范围与输出长度溢出。该核心用于小型演示和接口验证，不承诺 HAlign-5 的处理规模。
 
@@ -296,7 +310,7 @@ CTest 的 `unit` 入口运行 doctest 模块测试，`integration` 入口通过 
 
 通道一致性检查关注标题、清洗后序列、转换计数和结果约定。不同核心的合法 gap 布局可以不同；压缩输出先独立解压再检查。内部读取操作替身还用于稳定模拟短读、中断和读取、关闭失败，生产命令行没有对应的测试开关。
 
-替换核心后，先运行第 4 节的 Release 构建和完整测试，再运行地址和未定义行为检查：
+替换核心后，先运行 Release 构建和 `contract` 测试，再使用地址和未定义行为检查运行同一组测试。
 
 ```bash
 cmake -S . -B build-sanitize \
@@ -304,7 +318,7 @@ cmake -S . -B build-sanitize \
   -DBUILD_TESTING=ON \
   -DMSAKIT_ENABLE_SANITIZERS=ON
 cmake --build build-sanitize --parallel 2
-(cd build-sanitize && ctest --output-on-failure)
+(cd build-sanitize && ctest -L contract --output-on-failure)
 ```
 
 ## 8. HAlign-5 来源与许可

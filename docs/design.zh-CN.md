@@ -27,11 +27,11 @@ MSA-Kit 是 Linux、C++17、CMake >=3.18 的 DNA／RNA 多序列比对模板。�
 | `src/input.cpp` | 文件/stdin、严格 gzip、kseq、清洗、统计。 |
 | `src/output.cpp` | 文件身份、序列化、受保护写入和原子发布。 |
 | `src/validation.cpp` | 行身份、数量、宽度、字符与列校验。 |
-| `src/align.cpp` | 可替换的内存算法。 |
-| `src/internal.hpp` | 共用声明、故障替身、错误、尺寸计算。 |
+| `algorithm/align.cpp` | 可替换的内存算法。 |
+| `src/internal.hpp` | 框架共用声明、故障替身和错误。 |
 | `include/msakit/core.hpp` | 公开数据结构和入口。 |
 
-`src` 共七个文件。外围库独立编译 CLI、输入、输出、验证，程序与测试链接同一实现。kseq 只在输入模块实例化；zlib 专属辅助函数位于输入/输出。内部头用标准库类型和 `z_stream_s` 前向声明，核心不依赖 zlib、CLI11、spdlog。每个实现显式包含自身依赖。没有运行时插件加载器，也不建立 HAlign 风格工作目录树或原始输入副本。
+`src/` 包含程序入口、四个框架模块和一个内部头文件。`algorithm/` 单独存放算法实现。外围库独立编译 CLI、输入、输出、验证，程序与测试链接同一实现。kseq 只在输入模块实例化；zlib 专属辅助函数位于输入/输出。参考核心通过公开接口接入，使用标准库及尺寸检查辅助函数。自定义算法只需包含 `msakit/core.hpp`。每个实现显式包含自身依赖。没有运行时插件加载器，也不建立 HAlign 风格工作目录树或原始输入副本。
 
 <a id="3-core-interface"></a>
 ## 3. 核心接口
@@ -53,7 +53,7 @@ Alignment align(const std::vector<SequenceRecord>& input);
 <a id="migrating-from-020"></a>
 ### 从 0.2.0 迁移
 
-将 `std::span<const SequenceRecord>` 改为 `const std::vector<SequenceRecord>&`，同步声明、定义、回调，移除 `<span>` 并适配专属操作。普通调用仍是 `align(records)`。在新目录共同重建核心、框架和测试，运行 contract。字段、顺序、CLI、退出码、算法不变，版本输出为 `0.3.0`。
+将 `std::span<const SequenceRecord>` 改为 `const std::vector<SequenceRecord>&`，同步声明、定义、回调，移除 `<span>` 并适配专属操作。普通调用仍是 `align(records)`。在新目录共同重建核心、框架和测试，运行 contract。字段、顺序、CLI、退出码沿用原约定，版本输出为 `0.3.0`。
 
 <a id="4-input-contract"></a>
 ## 4. 输入约定
@@ -120,15 +120,19 @@ CLI11 自带错误码转换为 2；文件不存在属于 4。使用管道时设�
 
 ## 7. 参考星比对
 
-标记 **Reference star alignment — replaceable core**。第一条为中心，其他逐条与同一中心进行 Needleman–Wunsch 全局对齐。单条直接返回。评分先判断任一为 N 则 0（含 N/N），再判断相同或 T/U 为 +1，否则 -1；每 gap -4。并列优先对角、只消费中心、只消费查询。输出保留各自原字符。
+标记 **Reference star alignment — replaceable core**。第一条为中心，其他序列逐条与中心进行 Needleman–Wunsch 全局比对。单条直接返回。涉及 N 时替换得分为 0（含 N/N），相同或 T/U 得 +1，其他错配得 −1。每个 gap 字符扣 3 分，包括首尾 gap。回溯并列时依次选择对角、只消费中心、只消费查询。输出保留各自原字符。
 
-中心长度 L 对应 L+1 个插入槽，包含前后缀。每槽宽度取所有查询插入长度最大值，插入左对齐、右补 gap，中心在槽内全 gap。中心 AC、查询 ATC/AGGC 得到 A--C、AT-C、AGGC。槽内插入不进一步互比，不保证最优 MSA。
+中心长度 L 对应 L+1 个插入槽，包含前后缀。每槽宽度取所有查询插入长度最大值，插入左对齐、右补 gap，中心在槽内全 gap。中心 AC、查询 ATC/AGGC 的初稿为 A--C、AT-C、AGGC，本例精修后仍为该布局。
+
+三条及以上序列按输入顺序精修一轮，包括中心行。暂时从列计数中取出当前行，各碱基可在原位置左右 4 列内移动，顺序严格递增。动态规划最大化该行与其他行的成对总分。碱基间沿用上述替换得分，碱基对 gap 扣 2 分，双 gap 记 0。并列时优先总移动距离最小的布局，仍并列时从末端残基向前比较，优先较早的列。只接受严格提高总分的移动，再把该行计入列频数。一轮结束后删除全 gap 列。两条输入直接保留最优两两比对。
+
+设 N 为序列条数、W 为初稿宽度、S 为总残基数。每个残基最多考虑 9 个位置，精修耗时 O(NW + 9S)，额外空间为列计数与单行回溯 O(W + 9 × 最长序列长度)。双序列评分与精修参数均位于 `algorithm/align.cpp`。
 
 两两时间 `O(L × Σmᵢ)`，构造/验证 `O(n × W)`。逐查询释放完整 DP；峰值表 `O((L+1) × (max(mᵢ)+1))`，输入、插入信息和最终 `O(n × W)` 矩阵另占内存。评分用有符号类型；乘法、字节、评分范围和输出长度分配前检查溢出。资源不足明确失败，不截断或改算法。
 
 ## 8. 替换核心
 
-先构建原模板，阅读接口，替换 `src/align.cpp`；可新增私有算法文件并更新 CMake。保留外围职责，跑 contract、添加算法测试并维护依赖声明。可改变中心、评分或策略，但必须保留位置与清洗后字符。reference 的具体 gap 仅约束参考算法。新公开参数或输入语义需明确扩展公共规范。
+先构建原模板，阅读接口，替换 `algorithm/align.cpp`；可新增私有算法文件并更新 CMake。保留外围职责，跑 contract、添加算法测试并维护依赖声明。可改变中心、评分或策略，但必须保留位置与清洗后字符。reference 的具体 gap 仅约束参考算法。新公开参数或输入语义需明确扩展公共规范。
 
 <a id="9-verification-plan"></a>
 ## 9. 验证方案
