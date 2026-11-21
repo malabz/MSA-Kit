@@ -105,7 +105,7 @@ For website submission, follow the separate [Benchmark integration tutorial](../
 
 ## 6. Reference star alignment
 
-The source is marked **Reference star alignment — replaceable core**. Sequence 0 is the center. Each remaining sequence is globally aligned to it with Needleman–Wunsch. Match scores +1, mismatch -1, each gap -1. Any pair containing N scores 0, including N/N; T/U match for scoring while their output characters stay unchanged.
+The source is marked **Reference star alignment — replaceable core**. Sequence 0 is the center. Each remaining sequence is globally aligned to it with Needleman–Wunsch. Match scores +1, mismatch -1, each gap -4. Any pair containing N scores 0, including N/N; T/U match for scoring while their output characters stay unchanged.
 
 Tie order is diagonal, consume center only, then consume query only. A center of length L has L+1 insertion slots, including prefix/suffix. Each slot takes the maximum insertion length across queries. Insertions are left-aligned and right-padded; the center receives gaps in slots. Insertions are not realigned to each other.
 

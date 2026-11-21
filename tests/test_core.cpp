@@ -36,7 +36,7 @@ int score_rows(const std::string& a, const std::string& b) {
     int score = 0;
     for (std::size_t i = 0; i < a.size(); ++i) {
         REQUIRE_FALSE((a[i] == '-' && b[i] == '-'));
-        score += (a[i] == '-' || b[i] == '-') ? -1 : residue_score(a[i], b[i]);
+        score += (a[i] == '-' || b[i] == '-') ? -4 : residue_score(a[i], b[i]);
     }
     return score;
 }
@@ -50,8 +50,8 @@ void enumerate_scores(std::string_view a, std::string_view b,
         best = std::max(best, score);
         return;
     }
-    if (i != a.size()) enumerate_scores(a, b, i + 1, j, score - 1, best);
-    if (j != b.size()) enumerate_scores(a, b, i, j + 1, score - 1, best);
+    if (i != a.size()) enumerate_scores(a, b, i + 1, j, score - 4, best);
+    if (j != b.size()) enumerate_scores(a, b, i, j + 1, score - 4, best);
     if (i != a.size() && j != b.size()) {
         enumerate_scores(a, b, i + 1, j + 1, score + residue_score(a[i], b[j]), best);
     }
@@ -136,6 +136,16 @@ TEST_CASE("diagonal first traceback gives the specified tied alignment" * doctes
           std::vector<std::string>{"AA", "-A"});
 }
 
+TEST_CASE("default gap cost is four points per character" * doctest::test_suite("reference")) {
+    // A one-base shift gains matches but costs two terminal gaps.
+    // At length four mismatches win; at length five the shift wins.
+    const auto four = msakit::align(records({"ACAC", "CACA"}));
+    CHECK(four.rows == std::vector<std::string>{"ACAC", "CACA"});
+    const auto five = msakit::align(records({"ACACA", "CACAC"}));
+    CHECK(five.rows[0].size() == 6);
+    CHECK(score_rows(five.rows[0], five.rows[1]) == -4);
+}
+
 TEST_CASE("short pairwise reference scores match exhaustive path enumeration" * doctest::test_suite("reference")) {
     auto words = short_words("AC", 3);
     const auto special = short_words("ATUN", 2);
@@ -216,8 +226,8 @@ TEST_CASE("checked size and score arithmetic reject overflow without large alloc
     CHECK_NOTHROW(check_score_bounds(12, 20));
     if constexpr (sizeof(std::size_t) >= sizeof(std::int64_t)) {
         const auto score_max = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
-        CHECK_NOTHROW(check_score_bounds(score_max, 0));
-        CHECK_THROWS_AS(check_score_bounds(score_max, 1), Error);
+        CHECK_NOTHROW(check_score_bounds(score_max / 4, 0));
+        CHECK_THROWS_AS(check_score_bounds(score_max / 4, 1), Error);
         CHECK_THROWS_AS(check_score_bounds(maximum, 0), Error);
     }
 }

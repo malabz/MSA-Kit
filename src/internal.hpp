@@ -55,11 +55,13 @@ inline std::size_t checked_multiply(std::size_t left, std::size_t right) {
     return left * right;
 }
 
-// Every global-alignment score lies between -(center + query) and
+// Every global-alignment score lies between -kGapPenalty * (center + query) and
 // min(center, query). Check before converting lengths to signed scores.
+constexpr std::int64_t kGapPenalty = 4;
+
 inline void check_score_bounds(std::size_t center, std::size_t query) {
     constexpr auto limit = static_cast<std::uint64_t>(
-        std::numeric_limits<std::int64_t>::max());
+        std::numeric_limits<std::int64_t>::max() / kGapPenalty);
     if (center > limit || query > limit ||
         static_cast<std::uint64_t>(center) >
             limit - static_cast<std::uint64_t>(query)) {

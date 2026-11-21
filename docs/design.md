@@ -366,7 +366,7 @@ For center `c` and query `q`, substitution scoring is defined in this order:
 2. If characters are equal, or are the pair `T`/`U`, score +1.
 3. Otherwise score -1.
 
-Every gap character scores -1, including terminal gaps. There is no local
+Every gap character scores -4, including terminal gaps. There is no local
 clipping, free-end gap, affine-gap option, or reverse-complement search. T/U
 equivalence changes only scoring; the aligned strings retain their original
 cleaned `T` or `U` characters.

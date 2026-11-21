@@ -44,14 +44,14 @@ Projection align_pair(std::string_view center, std::string_view query) {
     const auto cell = [&](std::size_t i, std::size_t j) -> Score& {
         return scores[i * width + j];
     };
-    for (std::size_t i = 1; i < height; ++i) cell(i, 0) = -static_cast<Score>(i);
-    for (std::size_t j = 1; j < width; ++j) cell(0, j) = -static_cast<Score>(j);
+    for (std::size_t i = 1; i < height; ++i) cell(i, 0) = -detail::kGapPenalty * static_cast<Score>(i);
+    for (std::size_t j = 1; j < width; ++j) cell(0, j) = -detail::kGapPenalty * static_cast<Score>(j);
     for (std::size_t i = 1; i < height; ++i) {
         for (std::size_t j = 1; j < width; ++j) {
             cell(i, j) = std::max({
                 cell(i - 1, j - 1) + substitution(center[i - 1], query[j - 1]),
-                cell(i - 1, j) - 1,
-                cell(i, j - 1) - 1});
+                cell(i - 1, j) - detail::kGapPenalty,
+                cell(i, j - 1) - detail::kGapPenalty});
         }
     }
 
@@ -72,10 +72,10 @@ Projection align_pair(std::string_view center, std::string_view query) {
                 cell(i - 1, j - 1) + substitution(center[i - 1], query[j - 1])) {
             aligned_center.push_back(center[--i]);
             aligned_query.push_back(query[--j]);
-        } else if (i != 0 && cell(i, j) == cell(i - 1, j) - 1) {
+        } else if (i != 0 && cell(i, j) == cell(i - 1, j) - detail::kGapPenalty) {
             aligned_center.push_back(center[--i]);
             aligned_query.push_back('-');
-        } else if (j != 0 && cell(i, j) == cell(i, j - 1) - 1) {
+        } else if (j != 0 && cell(i, j) == cell(i, j - 1) - detail::kGapPenalty) {
             aligned_center.push_back('-');
             aligned_query.push_back(query[--j]);
         } else {

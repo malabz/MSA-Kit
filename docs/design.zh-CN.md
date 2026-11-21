@@ -120,7 +120,7 @@ CLI11 自带错误码转换为 2；文件不存在属于 4。使用管道时设�
 
 ## 7. 参考星比对
 
-标记 **Reference star alignment — replaceable core**。第一条为中心，其他逐条与同一中心进行 Needleman–Wunsch 全局对齐。单条直接返回。评分先判断任一为 N 则 0（含 N/N），再判断相同或 T/U 为 +1，否则 -1；每 gap -1。并列优先对角、只消费中心、只消费查询。输出保留各自原字符。
+标记 **Reference star alignment — replaceable core**。第一条为中心，其他逐条与同一中心进行 Needleman–Wunsch 全局对齐。单条直接返回。评分先判断任一为 N 则 0（含 N/N），再判断相同或 T/U 为 +1，否则 -1；每 gap -4。并列优先对角、只消费中心、只消费查询。输出保留各自原字符。
 
 中心长度 L 对应 L+1 个插入槽，包含前后缀。每槽宽度取所有查询插入长度最大值，插入左对齐、右补 gap，中心在槽内全 gap。中心 AC、查询 ATC/AGGC 得到 A--C、AT-C、AGGC。槽内插入不进一步互比，不保证最优 MSA。
 
